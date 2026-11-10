@@ -1,5 +1,6 @@
 """Tests for the HTTP API."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -116,3 +117,33 @@ class TestAgentEvents:
 
     def test_unknown_session_is_404(self, client: TestClient) -> None:
         assert client.get("/agents/nope/events").status_code == 404
+
+
+class TestStreamPublishing:
+    # The /stream endpoint itself never ends, so instead of reading it through
+    # TestClient we subscribe to the app's broadcaster directly. The stream
+    # generator is covered in test_sse.py.
+
+    def test_post_publishes_event_with_updated_summary(self, client: TestClient) -> None:
+        queue = client.app.state.broadcaster.subscribe()
+
+        post(client, "s1", "UserPromptSubmit", prompt="hi")
+        stored = post(client, "s1", "PreToolUse", tool_name="Bash")
+
+        queue.get_nowait()  # first event
+        message = queue.get_nowait()
+        assert message.event == "agent_event"
+        assert message.id == str(stored["id"])
+
+        data = json.loads(message.data)
+        assert data["event"]["hook_event_name"] == "PreToolUse"
+        assert data["agent"]["session_id"] == "s1"
+        assert data["agent"]["status"] == "running_tool"
+        assert data["agent"]["event_count"] == 2
+
+    def test_invalid_event_is_not_published(self, client: TestClient) -> None:
+        queue = client.app.state.broadcaster.subscribe()
+
+        client.post("/events", json={"hook_event_name": "Stop"})
+
+        assert queue.empty()
