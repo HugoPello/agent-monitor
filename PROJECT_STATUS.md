@@ -60,5 +60,10 @@ ruff is clean and the PR is merged.
 
 ## Phase 6 — Docs and Docker (`docs/readme-docker`)
 
-- [ ] README: GIF/screenshot, mermaid diagram, install, hook setup
-- [ ] `Dockerfile`
+- [x] README: demo GIF, mermaid diagram, quick start, hook setup, design decisions
+- [x] `scripts/demo.py`: fictional sessions to try the dashboard without Claude Code
+- [x] `Dockerfile` (multi-stage, from wheel, non-root, health check) and `.dockerignore`
+- [x] CI job that builds the image and smoke-tests the container
+- [x] MIT license
+
+**MVP complete.**
