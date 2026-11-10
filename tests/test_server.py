@@ -8,33 +8,13 @@ import json
 import threading
 import time
 import urllib.request
-from collections.abc import Iterator
-from pathlib import Path
 
-import pytest
-
-from agent_monitor.config import Settings
-from agent_monitor.server import GRACEFUL_SHUTDOWN_SECONDS, MonitorServer, build_server
-
-
-@pytest.fixture
-def running_server(tmp_path: Path) -> Iterator[tuple[MonitorServer, threading.Thread, str]]:
-    settings = Settings(_env_file=None, db_path=tmp_path / "events.db")
-    server = build_server(settings, port=0, log_level="warning")  # port 0: OS picks a free one
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    deadline = time.monotonic() + 5
-    while not server.started:
-        assert time.monotonic() < deadline, "server did not start"
-        time.sleep(0.02)
-    port = server.servers[0].sockets[0].getsockname()[1]
-    yield server, thread, f"http://127.0.0.1:{port}"
-    server.should_exit = True
-    thread.join(timeout=10)
+from agent_monitor.server import GRACEFUL_SHUTDOWN_SECONDS
+from tests.conftest import RunningServer
 
 
 def test_stream_receives_events_and_does_not_block_shutdown(
-    running_server: tuple[MonitorServer, threading.Thread, str],
+    running_server: RunningServer,
 ) -> None:
     server, thread, base_url = running_server
     lines: list[str] = []

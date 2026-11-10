@@ -41,10 +41,13 @@ ruff is clean and the PR is merged.
 
 ## Phase 4 — Hook script (`feat/hook-script`)
 
-- [ ] `hooks/send_event.py` (stdlib only, short timeout, always exit 0)
-- [ ] Example `settings.json` snippet (async command hook)
-- [ ] Tests, including "server down" behaviour
-- [ ] Verify with real events: subagent `session_id` and `agent_id`
+- [x] `hooks/send_event.py` (stdlib only, 2 s timeout, always exit 0, ignores proxies)
+- [x] `hooks/settings.example.json` (async command hooks, enabled per project)
+- [x] Tests: server up/down/unresponsive, invalid input, proxies, logging
+- [x] Verify with real events: subagent `session_id` and `agent_id`
+  - Subagent events carry the **parent's** `session_id`, plus `agent_id` and `agent_type`.
+  - Main-agent events have no `agent_id`.
+  - The `Agent` tool can return (`PostToolUse`) before the subagent finishes (background subagents), so subagent state must come from `SubagentStart`/`SubagentStop`, not from the `Agent` tool call.
 
 ## Phase 5 — Dashboard (`feat/dashboard`)
 
