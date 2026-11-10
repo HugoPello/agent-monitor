@@ -31,3 +31,18 @@ jobs:
 
       - name: Test
         run: pytest
+
+      # The editable install above reads files straight from src/, so it
+      # cannot catch packaging mistakes. Build a real wheel and check that
+      # the dashboard files are inside it.
+      - name: Check wheel contents
+        run: |
+          pip wheel --no-deps -w dist .
+          python - <<'EOF'
+          import glob, zipfile
+          names = set(zipfile.ZipFile(glob.glob("dist/*.whl")[0]).namelist())
+          expected = {f"agent_monitor/static/{f}" for f in ("index.html", "app.js", "styles.css")}
+          missing = expected - names
+          assert not missing, f"missing from wheel: {missing}"
+          print("wheel contains", sorted(expected))
+          EOF
