@@ -51,9 +51,12 @@ ruff is clean and the PR is merged.
 
 ## Phase 5 — Dashboard (`feat/dashboard`)
 
-- [ ] Static page served by FastAPI
-- [ ] One card per session, subagents nested, status badge
-- [ ] Event timeline, live updates via `EventSource`
+- [x] Static page served by FastAPI (`/` and `/static`), shipped as package data
+- [x] One card per session, subagents nested, status badge (colour + label)
+- [x] Event timeline, live updates via `EventSource`, catch-up on reconnect
+- [x] XSS-safe rendering (`textContent` only, guarded by a test)
+- [x] CI checks the built wheel contains the dashboard files
+- [x] Verified in a browser with real events (dark/light, desktop/mobile)
 
 ## Phase 6 — Docs and Docker (`docs/readme-docker`)
 
