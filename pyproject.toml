@@ -28,6 +28,10 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# Ship the dashboard files; by default only .py files end up in the wheel.
+[tool.setuptools.package-data]
+agent_monitor = ["static/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
