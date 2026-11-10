@@ -23,11 +23,13 @@ ruff is clean and the PR is merged.
 
 ## Phase 2 — REST API and status (`feat/events-api`)
 
-- [ ] `POST /events`
-- [ ] `GET /agents` (current state per session)
-- [ ] `GET /agents/{id}/events` (timeline)
-- [ ] Pure status computation function
-- [ ] API and status tests
+- [x] Settings from `.env` (pydantic-settings)
+- [x] `POST /events`
+- [x] `GET /agents` (current state per session, with subagents)
+- [x] `GET /agents/{id}/events` (timeline)
+- [x] Pure status computation function
+- [x] `python -m agent_monitor` entry point
+- [x] Config, status, storage and API tests
 
 ## Phase 3 — Real-time stream (`feat/sse-stream`)
 
