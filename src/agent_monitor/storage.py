@@ -99,6 +99,14 @@ class EventStore:
             ).fetchall()
         return [_row_to_event(row) for row in rows]
 
+    def session_ids(self) -> list[str]:
+        """Every session id, most recently active first."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT session_id FROM events GROUP BY session_id ORDER BY MAX(id) DESC"
+            ).fetchall()
+        return [row["session_id"] for row in rows]
+
 
 def _row_to_event(row: sqlite3.Row) -> StoredEvent:
     return StoredEvent(

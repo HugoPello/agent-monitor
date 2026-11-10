@@ -88,3 +88,15 @@ def test_sessions_do_not_mix(store: EventStore) -> None:
 
 def test_unknown_session_returns_empty_list(store: EventStore) -> None:
     assert store.events_for_session("nope") == []
+
+
+def test_session_ids_most_recent_first(store: EventStore) -> None:
+    store.add(make_event(session_id="old"))
+    store.add(make_event(session_id="new"))
+    store.add(make_event(session_id="old"))  # "old" becomes the most recent
+
+    assert store.session_ids() == ["old", "new"]
+
+
+def test_session_ids_empty_store(store: EventStore) -> None:
+    assert store.session_ids() == []
