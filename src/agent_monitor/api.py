@@ -16,10 +16,12 @@ Sync vs async endpoints: ``sqlite3`` is blocking, and blocking calls inside
 """
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, status
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from agent_monitor import __version__
@@ -31,6 +33,10 @@ from agent_monitor.status import AgentSummary, build_summary
 from agent_monitor.storage import EventStore
 
 STREAM_EVENT_NAME = "agent_event"
+
+# The dashboard: plain HTML/CSS/JS shipped inside the package
+# (see [tool.setuptools.package-data] in pyproject.toml).
+STATIC_DIR = Path(__file__).parent / "static"
 
 
 class StreamMessage(BaseModel):
@@ -48,6 +54,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(title="agent-monitor", version=__version__)
     app.state.broadcaster = broadcaster  # exposed for tests
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+    @app.get("/", include_in_schema=False)
+    def dashboard() -> FileResponse:
+        return FileResponse(STATIC_DIR / "index.html")
 
     def summarize(session_id: str) -> AgentSummary:
         events = store.events_for_session(session_id)

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>agent-monitor</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <h1 class="brand">agent-monitor</h1>
+      <span id="connection" class="connection" role="status" aria-live="polite" data-state="connecting">
+        connecting…
+      </span>
+    </header>
+
+    <main class="layout">
+      <section class="sessions" aria-labelledby="sessions-title">
+        <h2 id="sessions-title" class="section-title">Sessions</h2>
+        <p id="empty" class="empty" hidden>
+          No sessions yet. Enable the hook in a project and start Claude Code.
+        </p>
+        <ul id="agent-list" class="agent-list"></ul>
+      </section>
+
+      <section id="timeline" class="timeline" aria-labelledby="timeline-title" hidden>
+        <header class="timeline-header">
+          <h2 id="timeline-title" class="section-title">Timeline</h2>
+          <button id="close-timeline" type="button" class="icon-button" aria-label="Close timeline">
+            ×
+          </button>
+        </header>
+        <ol id="event-list" class="event-list"></ol>
+      </section>
+    </main>
+  </body>
+</html>

@@ -29,8 +29,12 @@ pytest
 python -m agent_monitor        # or: agent-monitor
 ```
 
-The API listens on `http://127.0.0.1:8765` by default (see `.env.example`).
-Interactive API docs are available at `/docs`.
+Open **http://127.0.0.1:8765** for the dashboard: one card per session, with
+its status, current tool and subagents. Click a card to see its event timeline.
+Both update live.
+
+The API is on the same port (see `.env.example` to change it). Interactive API
+docs are available at `/docs`.
 
 | Method | Path | Description |
 |---|---|---|
