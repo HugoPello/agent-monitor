@@ -33,9 +33,11 @@ ruff is clean and the PR is merged.
 
 ## Phase 3 — Real-time stream (`feat/sse-stream`)
 
-- [ ] In-memory broadcaster (one queue per client)
-- [ ] `GET /stream` (SSE)
-- [ ] Stream tests
+- [x] In-memory broadcaster (one bounded queue per client, slow clients dropped)
+- [x] `GET /stream` (SSE) with retry hint and keep-alive pings
+- [x] Each message carries the event and the session's updated summary
+- [x] Clean shutdown with open streams (`MonitorServer`)
+- [x] Stream tests, including a real-server integration test
 
 ## Phase 4 — Hook script (`feat/hook-script`)
 
