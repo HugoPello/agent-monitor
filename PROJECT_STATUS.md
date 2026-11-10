@@ -16,9 +16,10 @@ ruff is clean and the PR is merged.
 
 ## Phase 1 — Event model and storage (`feat/event-model-storage`)
 
-- [ ] Pydantic `HookEvent` model (required: `session_id`, `hook_event_name`; extra fields allowed)
-- [ ] SQLite schema and repository (stdlib `sqlite3`)
-- [ ] Tests for the model and the repository
+- [x] Pydantic `HookEvent` model (required: `session_id`, `hook_event_name`; extra fields allowed)
+- [x] Long strings truncated before storage (10k chars)
+- [x] SQLite schema and `EventStore` (stdlib `sqlite3`, WAL, one connection per operation)
+- [x] Tests for the model and the store
 
 ## Phase 2 — REST API and status (`feat/events-api`)
 
