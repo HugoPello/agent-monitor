@@ -46,3 +46,30 @@ jobs:
           assert not missing, f"missing from wheel: {missing}"
           print("wheel contains", sorted(expected))
           EOF
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build image
+        run: docker build -t agent-monitor:ci .
+
+      - name: Smoke test the container
+        run: |
+          docker run -d --name monitor -p 127.0.0.1:8765:8765 agent-monitor:ci
+          # A plain loop: while the app starts, the port can accept and then
+          # reset connections, which `curl --retry-connrefused` won't retry.
+          for i in $(seq 1 20); do
+            curl -fsS http://127.0.0.1:8765/health && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8765/health
+          python3 scripts/demo.py --speed 0
+          curl -fsS http://127.0.0.1:8765/agents | grep -q weather-app
+          curl -fsS http://127.0.0.1:8765/ | grep -q agent-list
+          echo "container OK"
+
+      - name: Container logs
+        if: always()
+        run: docker logs monitor
