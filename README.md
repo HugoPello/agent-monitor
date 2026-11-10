@@ -22,3 +22,19 @@ cp .env.example .env
 ruff check . && ruff format --check .
 pytest
 ```
+
+## Running the server
+
+```bash
+python -m agent_monitor        # or: agent-monitor
+```
+
+The API listens on `http://127.0.0.1:8765` by default (see `.env.example`).
+Interactive API docs are available at `/docs`.
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/events` | Receive a hook event (body: the hook's JSON input) |
+| `GET` | `/agents` | Current state of every session, most recent first |
+| `GET` | `/agents/{session_id}/events` | Event timeline of one session |
+| `GET` | `/health` | Liveness check |
