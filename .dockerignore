@@ -1,0 +1,21 @@
+# Only pyproject.toml, README.md, LICENSE and src/ are needed to build the image.
+# Keep everything else out, above all local data and secrets.
+.git
+.github
+.claude
+.venv
+venv
+.env
+data
+dist
+build
+**/*.egg-info
+**/__pycache__
+.pytest_cache
+.ruff_cache
+docs
+hooks
+scripts
+tests
+Dockerfile
+.dockerignore
