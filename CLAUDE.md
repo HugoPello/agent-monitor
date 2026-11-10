@@ -17,9 +17,11 @@ documented. The owner is learning from it, so explain important decisions.
 ## Layout
 
 ```
-src/agent_monitor/   application package
+src/agent_monitor/   application package (static/ holds the dashboard)
 hooks/               hook script installed into Claude Code settings
+scripts/             developer scripts (demo.py replays fictional sessions)
 tests/               pytest suite
+docs/                README assets (demo.gif)
 .claude/agents/      project subagents (researcher)
 ```
 
