@@ -15,10 +15,13 @@ dependencies = [
     "pydantic-settings>=2.16",
 ]
 
+[project.scripts]
+agent-monitor = "agent_monitor.__main__:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=9.2",
-    "httpx>=0.28",   # required by FastAPI's TestClient
+    "httpx2>=2.16",  # used by FastAPI's TestClient (plain httpx is deprecated there)
     "ruff>=0.17",
 ]
 
