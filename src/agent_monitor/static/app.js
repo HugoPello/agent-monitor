@@ -66,6 +66,11 @@ function projectName(cwd) {
   return parts.length ? parts[parts.length - 1] : cwd;
 }
 
+/** "1 event", "2 events". */
+function plural(count, noun) {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
 function shortId(id) {
   return id.slice(0, 8);
 }
@@ -161,7 +166,7 @@ function renderCard(agent) {
   if (agent.current_tool) meta.append(el("span", "tool", agent.current_tool));
   const time = el("span", "time", relativeTime(agent.last_event_at));
   time.dataset.time = agent.last_event_at;
-  meta.append(time, el("span", null, `${agent.event_count} events`));
+  meta.append(time, el("span", null, plural(agent.event_count, "event")));
 
   card.append(head, meta);
 
