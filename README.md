@@ -37,4 +37,12 @@ Interactive API docs are available at `/docs`.
 | `POST` | `/events` | Receive a hook event (body: the hook's JSON input) |
 | `GET` | `/agents` | Current state of every session, most recent first |
 | `GET` | `/agents/{session_id}/events` | Event timeline of one session |
+| `GET` | `/stream` | Live feed of new events ([Server-Sent Events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events)) |
 | `GET` | `/health` | Liveness check |
+
+Each `/stream` message is an `agent_event` whose `data` is
+`{"event": <stored event>, "agent": <updated session summary>}`. Try it with:
+
+```bash
+curl -N http://127.0.0.1:8765/stream
+```
