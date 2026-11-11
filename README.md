@@ -5,20 +5,37 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 **A real-time dashboard for your [Claude Code](https://code.claude.com) agents.**
-See every session at a glance: what it is doing right now, which tool it is
-running, which subagents it started, and when it is waiting for you.
+See every session at a glance: what it is doing right now, which subagents
+it delegated to, what failed, and when it is waiting for you.
 
-![agent-monitor dashboard: two sessions update live while a subagent runs](docs/demo.gif)
+![agent-monitor dashboard: a session delegates to three subagents in parallel, one fails a step, then everything finishes](docs/demo.gif)
 
-*The demo above runs on made-up data from [`scripts/demo.py`](scripts/demo.py).*
+*A session hands work to three subagents. Work streams along each flow while
+they run, a failed test run is marked on the subagent that failed, and each
+result travels back when it finishes. The data is made up, from
+[`scripts/demo.py`](scripts/demo.py).*
 
 ## Features
 
-- **One card per session** with a live status: `Working`, `Running tool`,
-  `Waiting for you`, `Idle`, `Stale`, `Ended`.
-- **Subagents nested in their session**, each `running` or `done`.
-- **Event timeline** per session, with the useful detail of each event: the
-  command run, the file edited, the prompt, Claude's last reply.
+- **A live circuit per session.** The main agent on the left, its subagents
+  on the right, and a flow between them. Work streams along a flow while
+  the subagent runs; a finished subagent sends a packet back.
+- **What each agent is doing, in one word:** `Thinking`, `Researching`,
+  `Coding`, `Running`, `Delegating`, `Waiting for you`, `Finished`, `Stale`,
+  `Ended`. See [Status and activity](#status-and-activity).
+- **Attention first.** Sessions that need you come first, and only
+  `Waiting for you` pulses. Chips in the top bar count what is waiting,
+  failed, working and finished; click one to jump to it.
+- **Failures where they happened.** A failed step is marked on the node that
+  failed ("1 failed") and named in the session ("general-purpose: Bash
+  failed"). Clicking it opens the timeline at that row.
+- **Event timeline** per session, behind *Details*: the command run, the file
+  edited, the prompt, Claude's last reply. A side drawer on wide screens, a
+  full-screen sheet on phones.
+- **Keyboard shortcuts:** `w` next waiting, `f` next failure, `j`/`k` move
+  between sessions, `Esc` close the timeline.
+- **Dark and light themes**, a mobile layout, and no motion under
+  `prefers-reduced-motion`.
 - **Live updates** over Server-Sent Events, with automatic catch-up after a
   reconnect.
 - **Safe by default:**
@@ -73,11 +90,14 @@ Open **http://127.0.0.1:8765**.
 
 ### Try it without Claude Code
 
-In a second terminal, replay two fictional sessions:
+In a second terminal, replay three fictional sessions (about 40 seconds):
 
 ```bash
 python scripts/demo.py             # --speed 2 for faster, --speed 0 for instant
 ```
+
+To start from an empty dashboard, point the server at a fresh database
+first, for example `AGENT_MONITOR_DB_PATH=data/demo.db`.
 
 ### Connect Claude Code
 
@@ -154,7 +174,12 @@ Set these in the environment of the hook command.
 | `AGENT_MONITOR_HOOK_TIMEOUT` | `2` | Seconds before giving up |
 | `AGENT_MONITOR_HOOK_LOG` | unset | File to append errors to, for troubleshooting |
 
-## Session status
+## Status and activity
+
+Each session has a **status**, worked out from its events, and an
+**activity**, the word the dashboard shows, worked out from the status.
+
+### Status
 
 Each session's status comes from its latest **main-agent** event. Subagent
 events don't change it: while a subagent works, the main agent is still
@@ -164,7 +189,7 @@ inside its `Agent` tool call.
 |---|---|
 | `idle` | `SessionStart`, `Stop`, or an idle notification |
 | `working` | `UserPromptSubmit`, `PostToolUse`, `PostToolUseFailure` |
-| `running_tool` | `PreToolUse` (the card shows which tool) |
+| `running_tool` | `PreToolUse` (the activity says what kind of tool) |
 | `waiting_input` | a permission-prompt notification |
 | `ended` | `SessionEnd` |
 | `stale` | `working` or `running_tool`, but no event for `STALE_AFTER_SECONDS` |
@@ -172,6 +197,32 @@ inside its `Agent` tool call.
 
 Subagents are tracked from `SubagentStart` and `SubagentStop`. Session and
 subagent events share the same `session_id` and differ only by `agent_id`.
+
+### Activity
+
+Hooks say *which* tool runs, never *why*, so the activity is a heuristic:
+it names the kind of tool running. Subagents get an activity the same way,
+from their own events.
+
+| Activity | When |
+|---|---|
+| `Researching` | running `Read`, `Grep`, `Glob`, `WebSearch`, `WebFetch` or `LSP` |
+| `Coding` | running `Edit`, `Write` or `NotebookEdit` |
+| `Running` | running `Bash` or `PowerShell` |
+| `Delegating` | running `Agent` (called `Task` before Claude Code 2.1.63) |
+| `Working` | running any other tool, MCP tools included |
+| `Thinking` | `working`, with no tool running |
+| `Waiting for you` | `waiting_input` |
+| `Finished` | `idle`, and the last turn ended with `Stop` |
+| `Idle` | `idle` before any prompt (a fresh session) |
+| `Stale`, `Ended` | the status of the same name |
+
+The table lives in [`TOOL_ACTIVITY`](src/agent_monitor/status.py); extend it
+to classify more tools.
+
+**Failed steps** are `PostToolUseFailure` events in the current turn,
+subagents included. They stay visible until the next prompt, even if the
+agent recovered, so a failure you didn't see is not lost.
 
 ## API
 
@@ -221,6 +272,13 @@ curl -N http://127.0.0.1:8765/stream
   *before* running the app's shutdown hooks, and SSE responses never end.
   [`MonitorServer`](src/agent_monitor/server.py) closes the streams first, so
   Ctrl+C and `docker stop` take about a second instead of hanging.
+- **Animations show only what hooks prove.** Hooks report who delegated to
+  whom and when each subagent finished, not what data passed between them.
+  So the flows show exactly that: a stream while a subagent runs and one
+  packet back when it ends. Only changes seen live animate, never a page
+  load, and nothing moves under `prefers-reduced-motion`. The design rules
+  are in [`DESIGN.md`](DESIGN.md), the product brief in
+  [`PRODUCT.md`](PRODUCT.md).
 - **XSS-safe rendering.** Prompts and commands are untrusted text. The
   dashboard inserts everything with `textContent`, and a test fails if
   [`app.js`](src/agent_monitor/static/app.js) ever uses an HTML-parsing API.
