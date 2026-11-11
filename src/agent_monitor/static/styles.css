@@ -261,6 +261,31 @@ body {
   color: var(--accent);
 }
 
+/* Why a stage needs you / what failed. Words first; colour only supports. */
+.stage-notes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  margin: 8px 0 0;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.note {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-waiting {
+  color: var(--act-waiting);
+}
+
+.note-failure {
+  color: var(--act-stale);
+}
+
 /* ---- Flow: main agent -> subagents ------------------------------------- */
 
 .flow {

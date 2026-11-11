@@ -264,6 +264,13 @@ function createStage(sessionId) {
   details.setAttribute("aria-controls", "timeline");
   head.append(project, meta, details);
 
+  // Why the session needs you, or that something went wrong. Shown only
+  // when there is something to act on; the nodes stay free of tool names.
+  const notes = el("p", "stage-notes");
+  const waitingNote = el("span", "note note-waiting");
+  const failureNote = el("span", "note note-failure");
+  notes.append(waitingNote, failureNote);
+
   const flow = el("div", "flow");
   const links = svgEl("svg", "links");
   links.setAttribute("aria-hidden", "true"); // decorative: the nodes carry the text
@@ -277,7 +284,7 @@ function createStage(sessionId) {
   subList.append(doneChip);
   flow.append(links, main, subList);
 
-  item.append(head, flow);
+  item.append(head, notes, flow);
   const stage = {
     item,
     project,
@@ -290,7 +297,11 @@ function createStage(sessionId) {
     subList,
     doneChip,
     subs: new Map(), // agent_id -> subagent node refs (see createSubNode)
+    notes,
+    waitingNote,
+    failureNote,
     activity: null, // last activity shown, to announce changes
+    failedSteps: 0, // last failure count shown, to announce new ones
   };
   stageByFlow.set(flow, stage);
   resizeObserver.observe(flow);
@@ -395,6 +406,22 @@ const ANNOUNCEMENTS = {
   finished: (project) => `${project} finished its turn`,
 };
 
+function updateNotes(stage, agent) {
+  const reason =
+    agent.activity === "waiting_input"
+      ? oneLine(agent.waiting_reason || "Needs your permission", 120)
+      : "";
+  stage.waitingNote.textContent = reason;
+  stage.waitingNote.hidden = !reason;
+
+  const failed = agent.failed_steps;
+  stage.failureNote.textContent = failed
+    ? `${failed} ${failed === 1 ? "step" : "steps"} failed · ${clockTime(agent.last_failure_at)}`
+    : "";
+  stage.failureNote.hidden = !failed;
+  stage.notes.hidden = !reason && !failed;
+}
+
 function updateStage(stage, agent, animate) {
   const selected = agent.session_id === state.selected;
   const project = projectName(agent.cwd);
@@ -402,6 +429,11 @@ function updateStage(stage, agent, animate) {
     announce(ANNOUNCEMENTS[agent.activity](project));
   }
   stage.activity = agent.activity;
+  if (animate && agent.failed_steps > stage.failedSteps) {
+    announce(`${project}: a step failed`);
+  }
+  stage.failedSteps = agent.failed_steps;
+  updateNotes(stage, agent);
   stage.item.title = agent.cwd || "";
   stage.item.classList.toggle("is-ended", agent.activity === "ended");
   stage.item.classList.toggle("is-waiting", agent.activity === "waiting_input");

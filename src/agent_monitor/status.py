@@ -260,6 +260,49 @@ def compute_subagents(
     ]
 
 
+def current_turn(events: Sequence[StoredEvent]) -> Sequence[StoredEvent]:
+    """Events since the main agent's latest prompt (all of them if none yet).
+
+    Subagent events in that span belong to the turn too: the main agent
+    delegated them while answering that prompt.
+    """
+    for index in range(len(events) - 1, -1, -1):
+        event = events[index]
+        if event.agent_id is None and event.hook_event_name == "UserPromptSubmit":
+            return events[index:]
+    return events
+
+
+@dataclass(frozen=True)
+class Failures:
+    count: int = 0
+    last_at: datetime | None = None
+
+
+def compute_failures(events: Sequence[StoredEvent]) -> Failures:
+    """Failed tool calls in the current turn, subagents included.
+
+    Counted per turn on purpose: a failed step stays true until the user
+    starts something new, even if the agent carried on afterwards.
+    """
+    failed = [e for e in current_turn(events) if e.hook_event_name == "PostToolUseFailure"]
+    return Failures(len(failed), failed[-1].received_at if failed else None)
+
+
+def waiting_reason(events: Sequence[StoredEvent], status: AgentStatus) -> str | None:
+    """What the session is waiting for: the permission prompt's own message.
+
+    Only while it is actually waiting; ``None`` if the message is missing.
+    """
+    if status is not AgentStatus.WAITING_INPUT:
+        return None
+    for event in reversed(events):
+        if event.agent_id is None and event.hook_event_name == "Notification":
+            message = event.payload.get("message")
+            return message if isinstance(message, str) and message else None
+    return None
+
+
 class AgentSummary(BaseModel):
     """One card on the dashboard: a session and its current state."""
 
@@ -272,6 +315,10 @@ class AgentSummary(BaseModel):
     last_event_at: datetime
     event_count: int
     subagents: list[SubagentSummary]
+    # Why it needs you / what went wrong, so the stage can say it at a glance.
+    waiting_reason: str | None
+    failed_steps: int
+    last_failure_at: datetime | None
 
 
 def build_summary(
@@ -284,6 +331,7 @@ def build_summary(
     result = compute_status(events, now, stale_after)
     # Most recent cwd wins: it can change during a session (CwdChanged).
     cwd = next((e.payload["cwd"] for e in reversed(events) if e.payload.get("cwd")), None)
+    failures = compute_failures(events)
     return AgentSummary(
         session_id=session_id,
         status=result.status,
@@ -294,4 +342,7 @@ def build_summary(
         last_event_at=events[-1].received_at,
         event_count=len(events),
         subagents=compute_subagents(events, now, stale_after),
+        waiting_reason=waiting_reason(events, result.status),
+        failed_steps=failures.count,
+        last_failure_at=failures.last_at,
     )

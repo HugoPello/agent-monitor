@@ -10,10 +10,12 @@ from agent_monitor.status import (
     TOOL_ACTIVITY,
     Activity,
     AgentStatus,
+    AgentSummary,
     SubagentStatus,
     SubagentSummary,
     activity_for,
     build_summary,
+    compute_failures,
     compute_status,
     compute_subagents,
 )
@@ -382,6 +384,81 @@ class TestSubagentStale:
         assert subagent.activity == Activity.STALE
 
 
+class TestFailures:
+    def test_counts_failures_in_the_current_turn(self) -> None:
+        events = [
+            ev("UserPromptSubmit"),
+            ev("PostToolUseFailure", at=timedelta(seconds=1), tool_name="Bash"),
+            ev("PostToolUseFailure", at=timedelta(seconds=2), agent_id="a1", tool_name="Edit"),
+            ev("PostToolUse", at=timedelta(seconds=3), tool_name="Bash"),
+        ]
+
+        failures = compute_failures(events)
+
+        assert failures.count == 2
+        assert failures.last_at == T0 + timedelta(seconds=2)
+
+    def test_a_new_prompt_starts_from_zero(self) -> None:
+        events = [
+            ev("UserPromptSubmit"),
+            ev("PostToolUseFailure", tool_name="Bash"),
+            ev("Stop"),
+            ev("UserPromptSubmit", at=timedelta(minutes=1)),
+        ]
+
+        assert compute_failures(events).count == 0
+        assert compute_failures(events).last_at is None
+
+    def test_failures_before_any_prompt_count(self) -> None:
+        assert compute_failures([ev("PostToolUseFailure", tool_name="Read")]).count == 1
+
+    def test_subagent_prompts_do_not_reset_the_turn(self) -> None:
+        events = [
+            ev("PostToolUseFailure", tool_name="Bash"),
+            ev("UserPromptSubmit", agent_id="a1"),
+        ]
+
+        assert compute_failures(events).count == 1
+
+
+class TestWaitingReason:
+    def summary_of(self, *events: StoredEvent) -> AgentSummary:
+        return build_summary("s1", list(events), T0, STALE_AFTER)
+
+    def test_permission_prompt_message_is_the_reason(self) -> None:
+        summary = self.summary_of(
+            ev("PreToolUse", tool_name="Bash"),
+            ev(
+                "Notification",
+                notification_type="permission_prompt",
+                message="Claude needs your permission to use Bash",
+            ),
+        )
+
+        assert summary.waiting_reason == "Claude needs your permission to use Bash"
+
+    def test_no_reason_once_no_longer_waiting(self) -> None:
+        summary = self.summary_of(
+            ev("Notification", notification_type="permission_prompt", message="perm"),
+            ev("PostToolUse", tool_name="Bash"),
+        )
+
+        assert summary.waiting_reason is None
+
+    def test_missing_message_gives_no_reason(self) -> None:
+        summary = self.summary_of(ev("Notification", notification_type="permission_prompt"))
+
+        assert summary.activity == Activity.WAITING_INPUT
+        assert summary.waiting_reason is None
+
+    def test_non_text_message_is_ignored(self) -> None:
+        summary = self.summary_of(
+            ev("Notification", notification_type="permission_prompt", message=42)
+        )
+
+        assert summary.waiting_reason is None
+
+
 def test_build_summary() -> None:
     events = [
         ev("SessionStart", cwd="/old"),
@@ -400,3 +477,6 @@ def test_build_summary() -> None:
     assert summary.last_event_at == T0 + timedelta(seconds=2)
     assert summary.event_count == 3
     assert summary.subagents == []
+    assert summary.waiting_reason is None
+    assert summary.failed_steps == 0
+    assert summary.last_failure_at is None
