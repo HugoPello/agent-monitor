@@ -74,12 +74,16 @@ const URGENCY = {
   ended: 5,
 };
 const BASE_TITLE = document.title;
+// Matches the CSS breakpoint: above it the timeline is a side drawer that
+// leaves the overview usable; below it, a modal full-screen sheet.
+const wideScreen = window.matchMedia("(min-width: 900px)");
 
 const state = {
   agents: new Map(), // session_id -> AgentSummary
   stages: new Map(), // session_id -> stage DOM refs (see createStage)
   selected: null, // session_id whose timeline is open
   events: [], // timeline of the selected session, oldest first
+  reopening: false, // the dialog is being reopened in another form
 };
 
 const dom = {
@@ -557,23 +561,36 @@ async function loadTimeline(sessionId) {
   }
 }
 
+/**
+ * Open the timeline dialog in the form that suits the screen. showModal()
+ * gives the small-screen sheet focus containment, an inert page behind it
+ * and Esc for free; show() keeps the overview usable beside the drawer.
+ */
+function openTimelineDialog() {
+  if (wideScreen.matches) dom.timeline.show();
+  else dom.timeline.showModal();
+  dom.timelineTitle.focus(); // land on what just opened
+}
+
 function selectSession(sessionId) {
   state.selected = sessionId;
   state.events = [];
-  dom.timeline.hidden = false;
+  if (!dom.timeline.open) openTimelineDialog();
   renderAgents();
   renderTimeline();
-  // Take focus (and the eye) to what just opened: on small screens it is a
-  // full-screen sheet, on wide ones a side panel that may be off-screen.
-  dom.timelineTitle.focus();
   loadTimeline(sessionId);
 }
 
 function closeTimeline() {
+  dom.timeline.close(); // cleanup runs in the "close" listener below
+}
+
+/** The dialog closed (button, Esc, or the browser): reset and refocus. */
+function onTimelineClosed() {
+  if (state.reopening) return;
   const opener = state.stages.get(state.selected)?.details;
   state.selected = null;
   state.events = [];
-  dom.timeline.hidden = true;
   renderAgents();
   opener?.focus(); // give keyboard focus back to the button that opened it
 }
@@ -624,8 +641,20 @@ dom.agentList.addEventListener("click", (e) => {
 
 dom.closeTimeline.addEventListener("click", closeTimeline);
 
+// A modal dialog closes on Esc by itself; the drawer (non-modal) does not.
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && state.selected) closeTimeline();
+  if (e.key === "Escape" && dom.timeline.open) closeTimeline();
+});
+
+dom.timeline.addEventListener("close", onTimelineClosed);
+
+// Crossing the breakpoint with the timeline open: reopen it in the other form.
+wideScreen.addEventListener("change", () => {
+  if (!dom.timeline.open) return;
+  state.reopening = true;
+  dom.timeline.close();
+  state.reopening = false;
+  openTimelineDialog();
 });
 
 connectStream();

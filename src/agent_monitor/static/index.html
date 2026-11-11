@@ -27,7 +27,9 @@
         <ul id="agent-list" class="agent-list"></ul>
       </section>
 
-      <section id="timeline" class="timeline" aria-labelledby="timeline-title" hidden>
+      <!-- A <dialog>: modal sheet on small screens, side drawer on wide ones
+           (app.js picks showModal() or show()). -->
+      <dialog id="timeline" class="timeline" aria-labelledby="timeline-title timeline-subject">
         <header class="timeline-header">
           <div>
             <h2 id="timeline-title" class="section-title" tabindex="-1">Timeline</h2>
@@ -40,7 +42,7 @@
           </button>
         </header>
         <ol id="event-list" class="event-list"></ol>
-      </section>
+      </dialog>
     </main>
   </body>
 </html>
