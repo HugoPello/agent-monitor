@@ -83,9 +83,19 @@ ruff is clean and the PR is merged.
 
 ## Phase 8 — Flow dashboard (`feat/flow-dashboard`)
 
-- [ ] One stage per session: main agent node, subagent nodes, SVG connectors
-- [ ] Per-activity colour and pulse, delegation and hand-back animations
-- [ ] Timeline demoted (option to be chosen)
+- [x] One stage per session: main agent on the left, subagents on the right,
+      each node showing only its activity (and `agent_type` for subagents)
+- [x] Keyed DOM updates instead of rebuilding on every event, stable stage order
+- [x] SVG connectors measured from the CSS-grid layout, redrawn on resize
+- [x] Colour and soft pulse per activity, in light and dark themes
+- [x] Live-only animations: connector draws on start, dashes flow while
+      running, a pulse returns to the main agent on stop, then the node fades
+- [x] `prefers-reduced-motion`: no movement, colours and labels still change
+- [x] Edge cases: "+N done" beyond four finished subagents, stale subagents
+      (dashed, no flow), several sessions, reconnect catch-up without replay
+- [x] Full timeline behind a per-stage "Details" button
+- [x] XSS guard extended (DOMParser, setHTMLUnsafe, inline handlers...)
+- [x] Verified in a browser with demo data (desktop/mobile, dark/light)
 
 ## Phase 9 — Demo and docs (`docs/flow-demo`)
 
