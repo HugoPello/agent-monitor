@@ -9,7 +9,7 @@ Key rule: the *session* status only looks at main-agent events
 drive the session status would make it flicker.
 """
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
@@ -55,10 +55,73 @@ _NOTIFICATION_STATUS: dict[str, AgentStatus] = {
 _ACTIVE = {AgentStatus.WORKING, AgentStatus.RUNNING_TOOL}
 
 
+class Activity(StrEnum):
+    """What an agent is doing, coarse enough to read at a glance.
+
+    A heuristic layered on top of ``AgentStatus``: hooks tell us *which* tool
+    runs, never *why*, so "researching" really means "running a tool that
+    usually reads". Keeping it derived from the status reuses the status
+    rules (stale, waiting, subagents not driving the session) unchanged.
+    """
+
+    IDLE = "idle"
+    THINKING = "thinking"  # working, no tool running
+    RESEARCHING = "researching"
+    CODING = "coding"
+    RUNNING = "running"  # shell commands
+    DELEGATING = "delegating"  # inside an Agent tool call
+    WORKING = "working"  # a tool we don't classify (MCP tools included)
+    WAITING_INPUT = "waiting_input"
+    STALE = "stale"
+    ENDED = "ended"
+
+
+# Tool name -> activity while that tool runs. Names are the exact strings
+# from the Claude Code tools reference (code.claude.com/docs/en/tools-reference).
+# Anything not listed, including MCP tools (``mcp__<server>__<tool>``), falls
+# back to Activity.WORKING. Extend this table to classify more tools.
+TOOL_ACTIVITY: dict[str, Activity] = {
+    "Read": Activity.RESEARCHING,
+    "Grep": Activity.RESEARCHING,
+    "Glob": Activity.RESEARCHING,
+    "WebSearch": Activity.RESEARCHING,
+    "WebFetch": Activity.RESEARCHING,
+    "LSP": Activity.RESEARCHING,
+    "Edit": Activity.CODING,
+    "Write": Activity.CODING,
+    "NotebookEdit": Activity.CODING,
+    "Bash": Activity.RUNNING,
+    "PowerShell": Activity.RUNNING,
+    "Agent": Activity.DELEGATING,
+    "Task": Activity.DELEGATING,  # the Agent tool's name before Claude Code 2.1.63
+}
+
+# Activity for every status that is not "running a tool".
+_STATUS_ACTIVITY: dict[AgentStatus, Activity] = {
+    AgentStatus.IDLE: Activity.IDLE,
+    AgentStatus.WORKING: Activity.THINKING,
+    AgentStatus.WAITING_INPUT: Activity.WAITING_INPUT,
+    AgentStatus.ENDED: Activity.ENDED,
+    AgentStatus.STALE: Activity.STALE,
+    AgentStatus.UNKNOWN: Activity.IDLE,
+}
+
+
+def activity_for(status: AgentStatus, tool_name: str | None) -> Activity:
+    """The activity implied by a status and the tool running, if any."""
+    if status is AgentStatus.RUNNING_TOOL:
+        return TOOL_ACTIVITY.get(tool_name or "", Activity.WORKING)
+    return _STATUS_ACTIVITY[status]
+
+
 @dataclass(frozen=True)
 class StatusResult:
     status: AgentStatus
     current_tool: str | None = None
+
+    @property
+    def activity(self) -> Activity:
+        return activity_for(self.status, self.current_tool)
 
 
 def status_from_event(event: StoredEvent) -> AgentStatus | None:
@@ -68,6 +131,43 @@ def status_from_event(event: StoredEvent) -> AgentStatus | None:
     return _EVENT_STATUS.get(event.hook_event_name)
 
 
+def subagent_status_from_event(event: StoredEvent) -> AgentStatus | None:
+    """Like ``status_from_event``, plus the events that bracket a subagent.
+
+    Kept separate on purpose: ``SubagentStop`` must never end the *session*.
+    """
+    if event.hook_event_name == "SubagentStart":
+        return AgentStatus.WORKING
+    if event.hook_event_name == "SubagentStop":
+        return AgentStatus.ENDED
+    return status_from_event(event)
+
+
+def _latest_status(
+    events: Sequence[StoredEvent],
+    interpret: Callable[[StoredEvent], AgentStatus | None],
+    last_seen: datetime,
+    now: datetime,
+    stale_after: timedelta,
+) -> StatusResult:
+    """Status from the newest event ``interpret`` understands.
+
+    ``last_seen`` is when the agent last showed any sign of life; an active
+    agent silent for longer than ``stale_after`` is reported as stale.
+    """
+    for event in reversed(events):
+        status = interpret(event)
+        if status is None:
+            continue  # an event we don't interpret: look further back
+
+        current_tool = event.tool_name if status is AgentStatus.RUNNING_TOOL else None
+        if status in _ACTIVE and now - last_seen > stale_after:
+            return StatusResult(AgentStatus.STALE, current_tool)
+        return StatusResult(status, current_tool)
+
+    return StatusResult(AgentStatus.UNKNOWN)
+
+
 def compute_status(
     events: Sequence[StoredEvent], now: datetime, stale_after: timedelta
 ) -> StatusResult:
@@ -75,51 +175,61 @@ def compute_status(
     if not events:
         return StatusResult(AgentStatus.UNKNOWN)
 
-    for event in reversed(events):
-        if event.agent_id is not None:
-            continue  # subagent event, see module docstring
-        status = status_from_event(event)
-        if status is None:
-            continue  # an event we don't interpret: look further back
-
-        current_tool = event.tool_name if status is AgentStatus.RUNNING_TOOL else None
-        # Any activity (subagents included) proves the session is alive.
-        silent_for = now - events[-1].received_at
-        if status in _ACTIVE and silent_for > stale_after:
-            return StatusResult(AgentStatus.STALE, current_tool)
-        return StatusResult(status, current_tool)
-
-    return StatusResult(AgentStatus.UNKNOWN)
+    main_events = [e for e in events if e.agent_id is None]  # see module docstring
+    # Any activity (subagents included) proves the session is alive.
+    last_seen = events[-1].received_at
+    return _latest_status(main_events, status_from_event, last_seen, now, stale_after)
 
 
 class SubagentSummary(BaseModel):
     agent_id: str
     agent_type: str | None
     status: SubagentStatus
+    activity: Activity
     started_at: datetime
+    last_event_at: datetime
 
 
-def compute_subagents(events: Sequence[StoredEvent]) -> list[SubagentSummary]:
+def _summarize_subagent(
+    agent_id: str, own_events: Sequence[StoredEvent], now: datetime, stale_after: timedelta
+) -> SubagentSummary:
+    """Summary of one subagent from its own events (non-empty, oldest first)."""
+    last_seen = own_events[-1].received_at
+    done = any(e.hook_event_name == "SubagentStop" for e in own_events)
+    if done:
+        activity = Activity.ENDED
+    else:
+        result = _latest_status(own_events, subagent_status_from_event, last_seen, now, stale_after)
+        activity = result.activity
+    agent_type = next(
+        (e.payload["agent_type"] for e in own_events if e.payload.get("agent_type")), None
+    )
+    return SubagentSummary(
+        agent_id=agent_id,
+        agent_type=agent_type,
+        status=SubagentStatus.DONE if done else SubagentStatus.RUNNING,
+        activity=activity,
+        started_at=own_events[0].received_at,
+        last_event_at=last_seen,
+    )
+
+
+def compute_subagents(
+    events: Sequence[StoredEvent], now: datetime, stale_after: timedelta
+) -> list[SubagentSummary]:
     """Subagents seen in a session, in the order they first appeared.
 
-    A subagent is ``running`` until its ``SubagentStop`` arrives.
+    A subagent is ``running`` until its ``SubagentStop`` arrives. Its activity
+    comes from its own latest event; a running subagent silent for longer
+    than ``stale_after`` is stale (e.g. its ``SubagentStop`` was never sent).
     """
-    subagents: dict[str, SubagentSummary] = {}
+    by_agent: dict[str, list[StoredEvent]] = {}
     for event in events:
-        if event.agent_id is None:
-            continue
-        summary = subagents.get(event.agent_id)
-        if summary is None:
-            summary = SubagentSummary(
-                agent_id=event.agent_id,
-                agent_type=event.payload.get("agent_type"),
-                status=SubagentStatus.RUNNING,
-                started_at=event.received_at,
-            )
-            subagents[event.agent_id] = summary
-        if event.hook_event_name == "SubagentStop":
-            summary.status = SubagentStatus.DONE
-    return list(subagents.values())
+        if event.agent_id is not None:
+            by_agent.setdefault(event.agent_id, []).append(event)
+    return [
+        _summarize_subagent(agent_id, own, now, stale_after) for agent_id, own in by_agent.items()
+    ]
 
 
 class AgentSummary(BaseModel):
@@ -127,7 +237,8 @@ class AgentSummary(BaseModel):
 
     session_id: str
     status: AgentStatus
-    current_tool: str | None
+    activity: Activity
+    current_tool: str | None  # kept for debugging; the dashboard shows activity
     cwd: str | None
     started_at: datetime
     last_event_at: datetime
@@ -148,10 +259,11 @@ def build_summary(
     return AgentSummary(
         session_id=session_id,
         status=result.status,
+        activity=result.activity,
         current_tool=result.current_tool,
         cwd=cwd,
         started_at=events[0].received_at,
         last_event_at=events[-1].received_at,
         event_count=len(events),
-        subagents=compute_subagents(events),
+        subagents=compute_subagents(events, now, stale_after),
     )

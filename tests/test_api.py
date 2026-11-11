@@ -70,6 +70,7 @@ class TestListAgents:
 
         assert agent["session_id"] == "s1"
         assert agent["status"] == "running_tool"
+        assert agent["activity"] == "coding"
         assert agent["current_tool"] == "Edit"
         assert agent["cwd"] == "/project"
         assert agent["event_count"] == 3
@@ -91,12 +92,15 @@ class TestListAgents:
         [agent] = client.get("/agents").json()
 
         assert agent["status"] == "running_tool"
+        assert agent["activity"] == "delegating"
         assert agent["subagents"] == [
             {
                 "agent_id": "a1",
                 "agent_type": "Explore",
                 "status": "done",
+                "activity": "ended",
                 "started_at": agent["subagents"][0]["started_at"],
+                "last_event_at": agent["subagents"][0]["last_event_at"],
             }
         ]
 
@@ -139,7 +143,22 @@ class TestStreamPublishing:
         assert data["event"]["hook_event_name"] == "PreToolUse"
         assert data["agent"]["session_id"] == "s1"
         assert data["agent"]["status"] == "running_tool"
+        assert data["agent"]["activity"] == "running"
         assert data["agent"]["event_count"] == 2
+
+    def test_stream_carries_subagent_activity(self, client: TestClient) -> None:
+        queue = client.app.state.broadcaster.subscribe()
+
+        post(client, "s1", "PreToolUse", tool_name="Agent")
+        post(client, "s1", "PreToolUse", agent_id="a1", agent_type="Explore", tool_name="Grep")
+
+        queue.get_nowait()  # first event
+        data = json.loads(queue.get_nowait().data)
+        assert data["agent"]["activity"] == "delegating"
+        [subagent] = data["agent"]["subagents"]
+        assert subagent["agent_type"] == "Explore"
+        assert subagent["status"] == "running"
+        assert subagent["activity"] == "researching"
 
     def test_invalid_event_is_not_published(self, client: TestClient) -> None:
         queue = client.app.state.broadcaster.subscribe()
