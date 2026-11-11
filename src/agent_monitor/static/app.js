@@ -457,7 +457,6 @@ function updateStage(stage, agent, animate) {
   }
   collapseDone(stage, agent.subagents);
   stage.flow.classList.toggle("has-subagents", agent.subagents.length > 0);
-  drawLinks(stage);
 }
 
 /** Point the connectors at where the nodes are now. */
@@ -506,6 +505,12 @@ function renderAgents(animate = false) {
     return stage.item;
   });
 
+  // Update before inserting: a new stage then enters the page already in
+  // its activity colours, instead of transitioning from the default grey.
+  for (const agent of agents) {
+    updateStage(state.stages.get(agent.session_id), agent, animate);
+  }
+
   // Move nodes only when the order really changed: moving a node restarts
   // its CSS animations.
   const current = dom.agentList.children;
@@ -515,9 +520,8 @@ function renderAgents(animate = false) {
   dom.empty.hidden = agents.length > 0;
   document.title = pageTitle(agents);
 
-  for (const agent of agents) {
-    updateStage(state.stages.get(agent.session_id), agent, animate);
-  }
+  // Connectors last: they measure the nodes, so the page must be final.
+  for (const agent of agents) drawLinks(state.stages.get(agent.session_id));
 }
 
 // ---- Timeline (behind each stage's "Details" button) ----------------------
