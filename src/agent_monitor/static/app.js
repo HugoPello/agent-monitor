@@ -18,6 +18,13 @@
 // grid, so the line ends are measured (getBoundingClientRect) and redrawn
 // whenever a stage changes or resizes.
 //
+// Animation: only changes seen live (from the stream) animate. A page load,
+// the 30 s refresh or a reconnect paints the current state directly, so
+// nothing "replays". A subagent starting draws its connector; while it runs
+// dashes flow towards it; when it stops a pulse travels back to the main
+// agent and the node fades. That only says who delegated to whom and when it
+// finished: hooks don't tell us what a subagent returned.
+//
 // What an agent is doing (its "activity") is decided by the server; this
 // file only maps activity names to labels.
 //
@@ -34,6 +41,8 @@ const RECONNECT_DELAY_MS = 5_000;
 const DETAIL_MAX_LENGTH = 160;
 const MAX_DONE_VISIBLE = 4; // older finished subagents collapse into "+N done"
 const SVG_NS = "http://www.w3.org/2000/svg";
+const FADE_AFTER_MS = 6_000; // a finished subagent dims this long after it is seen finishing
+const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
 const ACTIVITY_LABELS = {
   idle: "Idle",
@@ -230,7 +239,7 @@ function createStage(sessionId) {
   return stage;
 }
 
-function createSubNode(stage) {
+function createSubNode(stage, animate) {
   const node = el("li", "node node-sub");
   const type = el("span", "node-type");
   const activity = el("span", "node-activity");
@@ -246,10 +255,57 @@ function createSubNode(stage) {
   group.append(track, flow, back);
   stage.links.append(group);
 
-  return { node, type, activity, group, track, flow, back, status: null };
+  return {
+    node,
+    type,
+    activity,
+    group,
+    track,
+    flow,
+    back,
+    status: null,
+    drawIn: animate && !reducedMotion.matches, // draw the connector once it has a path
+    fadeTimer: null,
+  };
 }
 
-function updateSubNode(entry, sub) {
+/** Run a one-shot CSS animation by adding a class, and clean up after it. */
+function playOnce(element, className, then) {
+  element.classList.remove(className);
+  element.addEventListener(
+    "animationend",
+    () => {
+      element.classList.remove(className);
+      then?.();
+    },
+    { once: true },
+  );
+  element.classList.add(className);
+}
+
+/** Result delivered: a pulse runs back along the connector to the main agent. */
+function handBack(stage, entry) {
+  if (reducedMotion.matches) return; // the colour change says it already
+  playOnce(entry.back, "is-pulsing", () => playOnce(stage.main, "is-receiving"));
+}
+
+function fadeLater(entry, delay) {
+  clearTimeout(entry.fadeTimer);
+  const fade = () => {
+    entry.node.classList.add("is-faded");
+    entry.group.classList.add("is-faded");
+  };
+  if (delay > 0) entry.fadeTimer = setTimeout(fade, delay);
+  else fade();
+}
+
+function updateSubNode(stage, entry, sub, animate) {
+  if (sub.status === "done" && entry.status !== "done") {
+    const seenRunning = entry.status === "running";
+    if (animate && seenRunning) handBack(stage, entry);
+    fadeLater(entry, animate && seenRunning ? FADE_AFTER_MS : 0);
+  }
+
   entry.type.textContent = sub.agent_type || shortId(sub.agent_id);
   // A finished subagent has handed its result back: say "Done", not "Ended".
   entry.activity.textContent = sub.status === "done" ? "Done" : activityLabel(sub.activity);
@@ -275,7 +331,7 @@ function collapseDone(stage, subagents) {
   stage.doneChip.textContent = `+${hidden.size} done`;
 }
 
-function updateStage(stage, agent) {
+function updateStage(stage, agent, animate) {
   const selected = agent.session_id === state.selected;
   stage.item.title = agent.cwd || "";
   stage.item.classList.toggle("is-ended", agent.activity === "ended");
@@ -291,10 +347,10 @@ function updateStage(stage, agent) {
   for (const sub of agent.subagents) {
     let entry = stage.subs.get(sub.agent_id);
     if (!entry) {
-      entry = createSubNode(stage);
+      entry = createSubNode(stage, animate);
       stage.subs.set(sub.agent_id, entry);
     }
-    updateSubNode(entry, sub);
+    updateSubNode(stage, entry, sub, animate);
   }
   collapseDone(stage, agent.subagents);
   stage.flow.classList.toggle("has-subagents", agent.subagents.length > 0);
@@ -317,6 +373,11 @@ function drawLinks(stage) {
     entry.track.setAttribute("d", path);
     entry.flow.setAttribute("d", path);
     entry.back.setAttribute("d", connectorPath(to, from));
+    entry.group.style.setProperty("--len", `${entry.track.getTotalLength()}px`);
+    if (entry.drawIn) {
+      entry.drawIn = false; // only now: the draw-in animation needs the path length
+      playOnce(entry.group, "is-new");
+    }
   }
 }
 
@@ -330,7 +391,8 @@ const resizeObserver = new ResizeObserver((entries) => {
   }
 });
 
-function renderAgents() {
+/** Sync every stage with state.agents. `animate`: the change was seen live. */
+function renderAgents(animate = false) {
   const agents = [...state.agents.values()].sort(byStageOrder);
   const items = agents.map((agent) => {
     let stage = state.stages.get(agent.session_id);
@@ -350,7 +412,7 @@ function renderAgents() {
   dom.empty.hidden = agents.length > 0;
 
   for (const agent of agents) {
-    updateStage(state.stages.get(agent.session_id), agent);
+    updateStage(state.stages.get(agent.session_id), agent, animate);
   }
 }
 
@@ -444,7 +506,7 @@ function closeTimeline() {
 function handleStreamMessage(message) {
   const { event, agent } = JSON.parse(message.data);
   state.agents.set(agent.session_id, agent);
-  renderAgents();
+  renderAgents(true);
 
   const alreadyShown = state.events.some((e) => e.id === event.id);
   if (event.session_id === state.selected && !alreadyShown) {
