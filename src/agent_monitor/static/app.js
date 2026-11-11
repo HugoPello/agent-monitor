@@ -46,6 +46,7 @@ const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
 const ACTIVITY_LABELS = {
   idle: "Idle",
+  finished: "Finished",
   thinking: "Thinking",
   researching: "Researching",
   coding: "Coding",
@@ -56,6 +57,23 @@ const ACTIVITY_LABELS = {
   stale: "Stale",
   ended: "Ended",
 };
+
+// Stage order, most urgent first. Sessions only move when their urgency
+// changes (moving a node restarts its animations), not on every event.
+const URGENCY = {
+  waiting_input: 0,
+  stale: 1,
+  thinking: 2,
+  researching: 2,
+  coding: 2,
+  running: 2,
+  delegating: 2,
+  working: 2,
+  finished: 3,
+  idle: 4,
+  ended: 5,
+};
+const BASE_TITLE = document.title;
 
 const state = {
   agents: new Map(), // session_id -> AgentSummary
@@ -72,6 +90,7 @@ const dom = {
   timelineTitle: document.getElementById("timeline-title"),
   eventList: document.getElementById("event-list"),
   closeTimeline: document.getElementById("close-timeline"),
+  announcer: document.getElementById("announcer"),
 };
 
 // ---- Pure helpers ---------------------------------------------------------
@@ -181,14 +200,21 @@ function eventKind(name) {
   return "lifecycle";
 }
 
-/**
- * Stage order: live sessions first, newest session first. It only changes
- * when a session starts or ends, so stages don't jump around (and restart
- * their animations) every time a different session sends an event.
- */
+/** Most urgent first (see URGENCY), then newest session first. */
 function byStageOrder(a, b) {
-  const ended = Number(a.activity === "ended") - Number(b.activity === "ended");
-  return ended || new Date(b.started_at) - new Date(a.started_at);
+  const urgency = (URGENCY[a.activity] ?? 4) - (URGENCY[b.activity] ?? 4);
+  return urgency || new Date(b.started_at) - new Date(a.started_at);
+}
+
+/** "agent-monitor", or "(2) waiting · agent-monitor" when sessions need you. */
+function pageTitle(agents) {
+  const waiting = agents.filter((agent) => agent.activity === "waiting_input").length;
+  return waiting ? `(${waiting}) waiting · ${BASE_TITLE}` : BASE_TITLE;
+}
+
+/** Say something to screen readers without moving focus. */
+function announce(message) {
+  dom.announcer.textContent = message;
 }
 
 // ---- Stages (one per session) ---------------------------------------------
@@ -233,6 +259,7 @@ function createStage(sessionId) {
     subList,
     doneChip,
     subs: new Map(), // agent_id -> subagent node refs (see createSubNode)
+    activity: null, // last activity shown, to announce changes
   };
   stageByFlow.set(flow, stage);
   resizeObserver.observe(flow);
@@ -331,15 +358,28 @@ function collapseDone(stage, subagents) {
   stage.doneChip.textContent = `+${hidden.size} done`;
 }
 
+// Changes worth announcing when seen live: the moments the user is needed.
+const ANNOUNCEMENTS = {
+  waiting_input: (project) => `${project} is waiting for you`,
+  finished: (project) => `${project} finished its turn`,
+};
+
 function updateStage(stage, agent, animate) {
   const selected = agent.session_id === state.selected;
+  const project = projectName(agent.cwd);
+  if (animate && agent.activity !== stage.activity && ANNOUNCEMENTS[agent.activity]) {
+    announce(ANNOUNCEMENTS[agent.activity](project));
+  }
+  stage.activity = agent.activity;
   stage.item.title = agent.cwd || "";
   stage.item.classList.toggle("is-ended", agent.activity === "ended");
+  stage.item.classList.toggle("is-waiting", agent.activity === "waiting_input");
   stage.item.classList.toggle("is-selected", selected);
-  stage.project.textContent = projectName(agent.cwd);
+  stage.project.textContent = project;
   stage.time.dataset.time = agent.last_event_at;
   stage.time.textContent = relativeTime(agent.last_event_at);
   stage.details.setAttribute("aria-expanded", String(selected));
+  stage.details.setAttribute("aria-label", `Details for ${project}`);
 
   stage.main.dataset.activity = agent.activity;
   stage.mainActivity.textContent = activityLabel(agent.activity);
@@ -410,6 +450,7 @@ function renderAgents(animate = false) {
     dom.agentList.replaceChildren(...items);
   }
   dom.empty.hidden = agents.length > 0;
+  document.title = pageTitle(agents);
 
   for (const agent of agents) {
     updateStage(state.stages.get(agent.session_id), agent, animate);

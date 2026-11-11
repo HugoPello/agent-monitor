@@ -21,6 +21,7 @@
 
   /* Activity colours (node accent and label). All pass 4.5:1 on --surface. */
   --act-idle: #475467;
+  --act-finished: #067647;
   --act-thinking: #1d4ed8;
   --act-researching: #0e7490;
   --act-coding: #7c3aed;
@@ -50,6 +51,7 @@
     --stale-bg: #3d1414;     --stale-fg: #fca5a5;
 
     --act-idle: #b3b9c6;
+    --act-finished: #75e0a7;
     --act-thinking: #8fb4ff;
     --act-researching: #5eead4;
     --act-coding: #c4b5fd;
@@ -184,6 +186,12 @@ body {
   border-radius: var(--radius);
   background: var(--surface);
   transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+/* A session that needs you is marked as a whole, not just its node. */
+.stage.is-waiting {
+  border-color: color-mix(in srgb, var(--act-waiting) 60%, var(--border));
+  background: color-mix(in srgb, var(--act-waiting) 6%, var(--surface));
 }
 
 .stage.is-selected {
@@ -452,6 +460,7 @@ body {
    zero specificity, so the [data-activity] rules below always win. */
 :where(.node, .link) { --act: var(--act-idle); }
 [data-activity="idle"] { --act: var(--act-idle); }
+[data-activity="finished"] { --act: var(--act-finished); }
 [data-activity="thinking"] { --act: var(--act-thinking); }
 [data-activity="researching"] { --act: var(--act-researching); }
 [data-activity="coding"] { --act: var(--act-coding); }
