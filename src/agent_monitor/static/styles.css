@@ -384,7 +384,20 @@ button {
 }
 
 .note-failure {
+  padding: 0;
+  border: 0;
+  background: none;
   color: var(--fail);
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--fail) 40%, transparent);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.note-failure:hover {
+  text-decoration-color: currentColor;
 }
 
 /* ---- Flow: main agent -> subagents ------------------------------------- */
@@ -491,6 +504,23 @@ button {
 
 .node[data-activity="stale"] {
   border-style: dashed;
+}
+
+/* A subagent that failed a step says so on its own node. */
+.node-fail {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--fail) 55%, transparent);
+  border-radius: 4px;
+  color: var(--fail);
+  font: 500 10.5px var(--mono);
+  letter-spacing: 0.04em;
+}
+
+.node.has-failed .node-kind {
+  padding-right: 64px; /* room for the badge */
 }
 
 /* Finished work recedes through its frame, never its text. */
@@ -750,6 +780,11 @@ body:has(.timeline:modal) {
 }
 .event.kind-error .event-title > :first-child { color: var(--fail); }
 .event.kind-lifecycle { border-left-color: var(--rest); }
+
+.event.is-target {
+  outline: 2px solid var(--fail);
+  outline-offset: -2px;
+}
 
 .event-time {
   grid-row: span 2;

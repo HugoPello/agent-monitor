@@ -104,6 +104,7 @@ const state = {
   events: [], // timeline of the selected session, oldest first
   reopening: false, // the dialog is being reopened in another form
   jumps: {}, // summary kind -> index of the last session jumped to
+  focusFailure: false, // once the timeline loads, show its latest failure
 };
 
 const dom = {
@@ -307,7 +308,9 @@ function createStage(sessionId) {
   // when there is something to act on; the nodes stay free of tool names.
   const notes = el("p", "stage-notes");
   const waitingNote = el("span", "note note-waiting");
-  const failureNote = el("span", "note note-failure");
+  const failureNote = el("button", "note note-failure");
+  failureNote.type = "button";
+  failureNote.dataset.sessionId = sessionId;
   notes.append(waitingNote, failureNote);
 
   const flow = el("div", "flow");
@@ -352,7 +355,9 @@ function createSubNode(stage, animate) {
   const node = el("li", "node node-sub");
   const type = el("span", "node-kind");
   const activity = el("span", "node-activity");
-  node.append(type, activity);
+  const failBadge = el("span", "node-fail");
+  failBadge.hidden = true;
+  node.append(type, activity, failBadge);
   stage.subList.insertBefore(node, stage.doneChip);
 
   // One flow per subagent: a faint track, the streaming dashes on top,
@@ -381,6 +386,7 @@ function createSubNode(stage, animate) {
     node,
     type,
     activity,
+    failBadge,
     group,
     track,
     flow,
@@ -439,6 +445,10 @@ function updateSubNode(stage, entry, sub, animate) {
     target.dataset.state = sub.status;
   }
   entry.status = sub.status;
+  // The failure stays on the node that failed, in words.
+  entry.failBadge.hidden = sub.failed_steps === 0;
+  entry.failBadge.textContent = `${sub.failed_steps} failed`;
+  entry.node.classList.toggle("has-failed", sub.failed_steps > 0);
 }
 
 /** Keep the newest finished subagents visible; fold older ones into a chip. */
@@ -462,6 +472,14 @@ const ANNOUNCEMENTS = {
   finished: (project) => `${project} finished its turn`,
 };
 
+/** "coder: Edit failed · 10:39" (+ how many this turn when more than one). */
+function failureText(agent) {
+  const what = `${agent.last_failure_tool || "A step"} failed`;
+  const who = agent.last_failure_agent ? `${agent.last_failure_agent}: ` : "";
+  const more = agent.failed_steps > 1 ? ` (${agent.failed_steps} this turn)` : "";
+  return `${who}${what} · ${clockTime(agent.last_failure_at)}${more}`;
+}
+
 function updateNotes(stage, agent) {
   const reason =
     agent.activity === "waiting_input"
@@ -471,9 +489,11 @@ function updateNotes(stage, agent) {
   stage.waitingNote.hidden = !reason;
 
   const failed = agent.failed_steps;
-  stage.failureNote.textContent = failed
-    ? `${failed} ${failed === 1 ? "step" : "steps"} failed · ${clockTime(agent.last_failure_at)}`
-    : "";
+  stage.failureNote.textContent = failed ? failureText(agent) : "";
+  stage.failureNote.setAttribute(
+    "aria-label",
+    failed ? `${failureText(agent)}. Show it in the timeline` : "",
+  );
   stage.failureNote.hidden = !failed;
   stage.notes.hidden = !reason && !failed;
 }
@@ -486,7 +506,7 @@ function updateStage(stage, agent, animate) {
   }
   stage.activity = agent.activity;
   if (animate && agent.failed_steps > stage.failedSteps) {
-    announce(`${project}: a step failed`);
+    announce(`${project}: ${failureText(agent)}`);
   }
   stage.failedSteps = agent.failed_steps;
   updateNotes(stage, agent);
@@ -719,6 +739,18 @@ function renderTimeline() {
     : "";
   // Newest first, so live events appear at the top.
   dom.eventList.replaceChildren(...state.events.toReversed().map(renderEvent));
+  if (state.focusFailure && state.events.length) showLatestFailure();
+}
+
+/** Scroll the timeline to its newest failed step and focus it. */
+function showLatestFailure() {
+  state.focusFailure = false;
+  const row = dom.eventList.querySelector(".kind-error"); // newest first
+  if (!row) return;
+  row.tabIndex = -1;
+  row.classList.add("is-target");
+  row.scrollIntoView({ block: "center" });
+  row.focus({ preventScroll: true });
 }
 
 function updateRelativeTimes() {
@@ -833,6 +865,13 @@ function connectStream() {
 // ---- Start ----------------------------------------------------------------
 
 document.querySelector(".layout").addEventListener("click", (e) => {
+  const note = e.target.closest(".note-failure");
+  if (note) {
+    state.focusFailure = true;
+    if (note.dataset.sessionId === state.selected) renderTimeline();
+    else selectSession(note.dataset.sessionId);
+    return;
+  }
   const button = e.target.closest(".details-button");
   if (!button) return;
   if (button.dataset.sessionId === state.selected) closeTimeline();
