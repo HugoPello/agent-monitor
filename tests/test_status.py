@@ -346,6 +346,7 @@ def test_build_summary() -> None:
 
     assert summary.session_id == "s1"
     assert summary.status == AgentStatus.RUNNING_TOOL
+    assert summary.activity == Activity.RUNNING
     assert summary.current_tool == "Bash"
     assert summary.cwd == "/project"
     assert summary.started_at == T0

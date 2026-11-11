@@ -237,7 +237,8 @@ class AgentSummary(BaseModel):
 
     session_id: str
     status: AgentStatus
-    current_tool: str | None
+    activity: Activity
+    current_tool: str | None  # kept for debugging; the dashboard shows activity
     cwd: str | None
     started_at: datetime
     last_event_at: datetime
@@ -258,6 +259,7 @@ def build_summary(
     return AgentSummary(
         session_id=session_id,
         status=result.status,
+        activity=result.activity,
         current_tool=result.current_tool,
         cwd=cwd,
         started_at=events[0].received_at,
