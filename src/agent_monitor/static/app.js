@@ -4,14 +4,22 @@
 //   1. Open an EventSource on /stream. Every time it (re)connects, reload
 //      /agents, so nothing missed while disconnected is lost.
 //   2. Each "agent_event" message carries the new event and the session's
-//      updated summary: update that card and, if its timeline is open,
-//      add the event.
+//      updated summary: update that session's stage and, if its timeline is
+//      open, add the event.
 //   3. Reload /agents every 30 s anyway: "stale" is computed by the server
 //      when asked, and a silent session sends no events to trigger it.
 //
+// Rendering: one "stage" per session, with the main agent on the left and
+// its subagents on the right. Stages and nodes are created once and then
+// updated in place (keyed by session_id / agent_id). Rebuilding them on
+// every event would restart their CSS animations.
+//
+// What an agent is doing (its "activity") is decided by the server; this
+// file only maps activity names to labels.
+//
 // SECURITY: payloads contain prompts, commands and code we don't control.
-// All text goes into the page through el() / textContent, never parsed as
-// HTML, so a prompt containing <script> is shown, not executed.
+// All text goes into the page through textContent, never parsed as HTML,
+// so a prompt containing <script> is shown, not executed.
 // (tests/test_dashboard.py fails if any HTML-parsing API appears here.)
 
 "use strict";
@@ -20,21 +28,24 @@ const REFRESH_INTERVAL_MS = 30_000;
 const CLOCK_INTERVAL_MS = 10_000;
 const RECONNECT_DELAY_MS = 5_000;
 const DETAIL_MAX_LENGTH = 160;
+const MAX_DONE_VISIBLE = 4; // older finished subagents collapse into "+N done"
 
-const STATUS_LABELS = {
+const ACTIVITY_LABELS = {
   idle: "Idle",
+  thinking: "Thinking",
+  researching: "Researching",
+  coding: "Coding",
+  running: "Running",
+  delegating: "Delegating",
   working: "Working",
-  running_tool: "Running tool",
   waiting_input: "Waiting for you",
-  ended: "Ended",
   stale: "Stale",
-  unknown: "Unknown",
-  running: "running",
-  done: "done",
+  ended: "Ended",
 };
 
 const state = {
   agents: new Map(), // session_id -> AgentSummary
+  stages: new Map(), // session_id -> stage DOM refs (see createStage)
   selected: null, // session_id whose timeline is open
   events: [], // timeline of the selected session, oldest first
 };
@@ -66,13 +77,12 @@ function projectName(cwd) {
   return parts.length ? parts[parts.length - 1] : cwd;
 }
 
-/** "1 event", "2 events". */
-function plural(count, noun) {
-  return `${count} ${noun}${count === 1 ? "" : "s"}`;
-}
-
 function shortId(id) {
   return id.slice(0, 8);
+}
+
+function activityLabel(activity) {
+  return ACTIVITY_LABELS[activity] || activity;
 }
 
 function relativeTime(iso, now = Date.now()) {
@@ -140,63 +150,140 @@ function eventKind(name) {
   return "lifecycle";
 }
 
-function byMostRecent(a, b) {
-  return new Date(b.last_event_at) - new Date(a.last_event_at);
+/**
+ * Stage order: live sessions first, newest session first. It only changes
+ * when a session starts or ends, so stages don't jump around (and restart
+ * their animations) every time a different session sends an event.
+ */
+function byStageOrder(a, b) {
+  const ended = Number(a.activity === "ended") - Number(b.activity === "ended");
+  return ended || new Date(b.started_at) - new Date(a.started_at);
 }
 
-// ---- Rendering ------------------------------------------------------------
+// ---- Stages (one per session) ---------------------------------------------
 
-function badge(status) {
-  return el("span", `badge status-${status}`, STATUS_LABELS[status] || status);
+function createStage(sessionId) {
+  const item = el("li", "stage");
+
+  const head = el("header", "stage-head");
+  const project = el("span", "project");
+  const meta = el("span", "stage-meta");
+  const time = el("span", "time");
+  meta.append(el("span", "session-id", shortId(sessionId)), time);
+  const details = el("button", "details-button", "Details");
+  details.type = "button";
+  details.dataset.sessionId = sessionId;
+  details.setAttribute("aria-controls", "timeline");
+  head.append(project, meta, details);
+
+  const flow = el("div", "flow");
+  const main = el("div", "node node-main");
+  const mainActivity = el("span", "node-activity");
+  main.append(el("span", "visually-hidden", "Main agent: "), mainActivity);
+  const subList = el("ul", "subagent-nodes");
+  subList.setAttribute("aria-label", "Subagents");
+  const doneChip = el("li", "done-chip");
+  doneChip.hidden = true;
+  subList.append(doneChip);
+  flow.append(main, subList);
+
+  item.append(head, flow);
+  return {
+    item,
+    project,
+    time,
+    details,
+    flow,
+    main,
+    mainActivity,
+    subList,
+    doneChip,
+    subs: new Map(), // agent_id -> subagent node refs (see createSubNode)
+  };
 }
 
-function renderCard(agent) {
-  const item = el("li");
-  const card = el("button", "card");
-  card.type = "button";
-  card.dataset.sessionId = agent.session_id;
-  card.setAttribute("aria-pressed", String(agent.session_id === state.selected));
-  card.title = agent.cwd || "";
+function createSubNode(stage) {
+  const node = el("li", "node node-sub");
+  const type = el("span", "node-type");
+  const activity = el("span", "node-activity");
+  node.append(type, activity);
+  stage.subList.insertBefore(node, stage.doneChip);
+  return { node, type, activity, status: null };
+}
 
-  const head = el("div", "card-head");
-  head.append(el("span", "project", projectName(agent.cwd)), badge(agent.status));
+function updateSubNode(entry, sub) {
+  entry.type.textContent = sub.agent_type || shortId(sub.agent_id);
+  // A finished subagent has handed its result back: say "Done", not "Ended".
+  entry.activity.textContent = sub.status === "done" ? "Done" : activityLabel(sub.activity);
+  entry.node.dataset.activity = sub.activity;
+  entry.node.dataset.state = sub.status;
+  entry.status = sub.status;
+}
 
-  const meta = el("div", "card-meta");
-  meta.append(el("span", "session-id", shortId(agent.session_id)));
-  if (agent.current_tool) meta.append(el("span", "tool", agent.current_tool));
-  const time = el("span", "time", relativeTime(agent.last_event_at));
-  time.dataset.time = agent.last_event_at;
-  meta.append(time, el("span", null, plural(agent.event_count, "event")));
-
-  card.append(head, meta);
-
-  if (agent.subagents.length) {
-    const list = el("ul", "subagents");
-    for (const sub of agent.subagents) {
-      const entry = el("li", "subagent");
-      entry.append(el("span", null, sub.agent_type || shortId(sub.agent_id)), badge(sub.status));
-      list.append(entry);
-    }
-    card.append(list);
+/** Keep the newest finished subagents visible; fold older ones into a chip. */
+function collapseDone(stage, subagents) {
+  const done = subagents
+    .filter((sub) => sub.status === "done")
+    .sort((a, b) => new Date(a.last_event_at) - new Date(b.last_event_at));
+  const extra = Math.max(0, done.length - MAX_DONE_VISIBLE);
+  const hidden = new Set(done.slice(0, extra).map((sub) => sub.agent_id));
+  for (const [agentId, entry] of stage.subs) {
+    entry.node.hidden = hidden.has(agentId);
   }
+  stage.doneChip.hidden = hidden.size === 0;
+  stage.doneChip.textContent = `+${hidden.size} done`;
+}
 
-  item.append(card);
-  return item;
+function updateStage(stage, agent) {
+  const selected = agent.session_id === state.selected;
+  stage.item.title = agent.cwd || "";
+  stage.item.classList.toggle("is-ended", agent.activity === "ended");
+  stage.item.classList.toggle("is-selected", selected);
+  stage.project.textContent = projectName(agent.cwd);
+  stage.time.dataset.time = agent.last_event_at;
+  stage.time.textContent = relativeTime(agent.last_event_at);
+  stage.details.setAttribute("aria-expanded", String(selected));
+
+  stage.main.dataset.activity = agent.activity;
+  stage.mainActivity.textContent = activityLabel(agent.activity);
+
+  for (const sub of agent.subagents) {
+    let entry = stage.subs.get(sub.agent_id);
+    if (!entry) {
+      entry = createSubNode(stage);
+      stage.subs.set(sub.agent_id, entry);
+    }
+    updateSubNode(entry, sub);
+  }
+  collapseDone(stage, agent.subagents);
+  stage.flow.classList.toggle("has-subagents", agent.subagents.length > 0);
 }
 
 function renderAgents() {
-  // Rebuilding the list is simple and cheap for a handful of sessions.
-  // Remember which card had keyboard focus so updates don't steal it.
-  const focused = document.activeElement?.dataset?.sessionId;
-  const agents = [...state.agents.values()].sort(byMostRecent);
+  const agents = [...state.agents.values()].sort(byStageOrder);
+  const items = agents.map((agent) => {
+    let stage = state.stages.get(agent.session_id);
+    if (!stage) {
+      stage = createStage(agent.session_id);
+      state.stages.set(agent.session_id, stage);
+    }
+    return stage.item;
+  });
 
-  dom.agentList.replaceChildren(...agents.map(renderCard));
+  // Move nodes only when the order really changed: moving a node restarts
+  // its CSS animations.
+  const current = dom.agentList.children;
+  if (items.length !== current.length || items.some((item, i) => item !== current[i])) {
+    dom.agentList.replaceChildren(...items);
+  }
   dom.empty.hidden = agents.length > 0;
 
-  if (focused) {
-    dom.agentList.querySelector(`[data-session-id="${CSS.escape(focused)}"]`)?.focus();
+  for (const agent of agents) {
+    updateStage(state.stages.get(agent.session_id), agent);
   }
 }
+
+// ---- Timeline (behind each stage's "Details" button) ----------------------
 
 function renderEvent(event) {
   const fromSubagent = Boolean(event.agent_id);
@@ -275,10 +362,12 @@ function selectSession(sessionId) {
 }
 
 function closeTimeline() {
+  const opener = state.stages.get(state.selected)?.details;
   state.selected = null;
   state.events = [];
   dom.timeline.hidden = true;
   renderAgents();
+  opener?.focus(); // give keyboard focus back to the button that opened it
 }
 
 function handleStreamMessage(message) {
@@ -319,8 +408,10 @@ function connectStream() {
 // ---- Start ----------------------------------------------------------------
 
 dom.agentList.addEventListener("click", (e) => {
-  const card = e.target.closest(".card");
-  if (card) selectSession(card.dataset.sessionId);
+  const button = e.target.closest(".details-button");
+  if (!button) return;
+  if (button.dataset.sessionId === state.selected) closeTimeline();
+  else selectSession(button.dataset.sessionId);
 });
 
 dom.closeTimeline.addEventListener("click", closeTimeline);
