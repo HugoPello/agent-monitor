@@ -10,7 +10,7 @@ drive the session status would make it flicker.
 """
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from enum import StrEnum
 
@@ -64,7 +64,8 @@ class Activity(StrEnum):
     rules (stale, waiting, subagents not driving the session) unchanged.
     """
 
-    IDLE = "idle"
+    IDLE = "idle"  # nothing asked yet (fresh session)
+    FINISHED = "finished"  # finished its turn: the next move is the user's
     THINKING = "thinking"  # working, no tool running
     RESEARCHING = "researching"
     CODING = "coding"
@@ -107,21 +108,47 @@ _STATUS_ACTIVITY: dict[AgentStatus, Activity] = {
 }
 
 
-def activity_for(status: AgentStatus, tool_name: str | None) -> Activity:
-    """The activity implied by a status and the tool running, if any."""
+def activity_for(
+    status: AgentStatus, tool_name: str | None, *, turn_finished: bool = False
+) -> Activity:
+    """The activity implied by a status and the tool running, if any.
+
+    ``turn_finished`` tells an idle agent that has answered (FINISHED) from
+    one that was never asked anything (IDLE).
+    """
     if status is AgentStatus.RUNNING_TOOL:
         return TOOL_ACTIVITY.get(tool_name or "", Activity.WORKING)
+    if status is AgentStatus.IDLE and turn_finished:
+        return Activity.FINISHED
     return _STATUS_ACTIVITY[status]
+
+
+# Events that open or close a turn of the conversation.
+_TURN_BOUNDARIES = {"SessionStart", "UserPromptSubmit", "Stop"}
+
+
+def turn_finished(main_events: Sequence[StoredEvent]) -> bool:
+    """Whether the main agent's latest turn ended with ``Stop``.
+
+    Looks at the last turn boundary rather than the last event, so an
+    ``idle_prompt`` notification arriving after the ``Stop`` keeps the turn
+    finished, while a fresh ``SessionStart`` does not count as one.
+    """
+    for event in reversed(main_events):
+        if event.hook_event_name in _TURN_BOUNDARIES:
+            return event.hook_event_name == "Stop"
+    return False
 
 
 @dataclass(frozen=True)
 class StatusResult:
     status: AgentStatus
     current_tool: str | None = None
+    turn_finished: bool = False
 
     @property
     def activity(self) -> Activity:
-        return activity_for(self.status, self.current_tool)
+        return activity_for(self.status, self.current_tool, turn_finished=self.turn_finished)
 
 
 def status_from_event(event: StoredEvent) -> AgentStatus | None:
@@ -178,7 +205,8 @@ def compute_status(
     main_events = [e for e in events if e.agent_id is None]  # see module docstring
     # Any activity (subagents included) proves the session is alive.
     last_seen = events[-1].received_at
-    return _latest_status(main_events, status_from_event, last_seen, now, stale_after)
+    result = _latest_status(main_events, status_from_event, last_seen, now, stale_after)
+    return replace(result, turn_finished=turn_finished(main_events))
 
 
 class SubagentSummary(BaseModel):

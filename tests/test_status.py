@@ -212,6 +212,53 @@ def subagents_of(*events: StoredEvent, now: datetime = T0) -> list[SubagentSumma
     return compute_subagents(list(events), now, STALE_AFTER)
 
 
+class TestFinishedTurn:
+    def activity_of(self, *events: StoredEvent) -> Activity:
+        return compute_status(list(events), T0, STALE_AFTER).activity
+
+    def test_stop_means_the_turn_is_finished(self) -> None:
+        events = [ev("SessionStart"), ev("UserPromptSubmit"), ev("Stop")]
+
+        assert self.activity_of(*events) == Activity.FINISHED
+
+    def test_fresh_session_is_idle(self) -> None:
+        assert self.activity_of(ev("SessionStart")) == Activity.IDLE
+
+    def test_idle_prompt_after_stop_stays_finished(self) -> None:
+        events = [
+            ev("UserPromptSubmit"),
+            ev("Stop"),
+            ev("Notification", notification_type="idle_prompt"),
+        ]
+
+        assert self.activity_of(*events) == Activity.FINISHED
+
+    def test_idle_prompt_on_a_fresh_session_stays_idle(self) -> None:
+        events = [ev("SessionStart"), ev("Notification", notification_type="idle_prompt")]
+
+        assert self.activity_of(*events) == Activity.IDLE
+
+    def test_new_prompt_starts_a_new_turn(self) -> None:
+        events = [ev("Stop"), ev("UserPromptSubmit")]
+
+        assert self.activity_of(*events) == Activity.THINKING
+
+    def test_new_session_after_stop_is_idle(self) -> None:
+        # e.g. /clear starts a new session id, but a resume can reuse one
+        events = [ev("Stop"), ev("SessionStart", source="resume")]
+
+        assert self.activity_of(*events) == Activity.IDLE
+
+    def test_subagent_events_are_not_turn_boundaries(self) -> None:
+        events = [ev("Stop"), ev("SubagentStop", agent_id="a1")]
+
+        assert self.activity_of(*events) == Activity.FINISHED
+
+    def test_activity_for_needs_both_idle_and_finished(self) -> None:
+        assert activity_for(AgentStatus.IDLE, None, turn_finished=True) == Activity.FINISHED
+        assert activity_for(AgentStatus.WORKING, None, turn_finished=True) == Activity.THINKING
+
+
 class TestComputeSubagents:
     def test_tracks_subagents_in_order_of_appearance(self) -> None:
         events = [
