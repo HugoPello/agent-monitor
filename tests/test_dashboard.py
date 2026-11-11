@@ -43,10 +43,34 @@ def test_dashboard_is_not_part_of_the_api_schema(client: TestClient) -> None:
     assert "/" not in client.get("/openapi.json").json()["paths"]
 
 
-def test_app_js_never_uses_innerhtml() -> None:
+# Every API that turns a string into markup, plus inline event handlers set
+# through setAttribute (SVG elements accept them too).
+UNSAFE_JS_APIS = (
+    "innerHTML",
+    "outerHTML",
+    "insertAdjacentHTML",
+    "document.write",
+    "DOMParser",
+    "createContextualFragment",
+    "setHTMLUnsafe",
+    "parseHTMLUnsafe",
+    'setAttribute("on',
+    "setAttribute('on",
+)
+
+
+@pytest.mark.parametrize("unsafe", UNSAFE_JS_APIS)
+def test_app_js_never_parses_html(unsafe: str) -> None:
     # Guard against XSS: event payloads contain prompts and code we don't
-    # control, so the dashboard must insert all text with textContent.
+    # control, so the dashboard builds HTML and SVG with createElement /
+    # createElementNS and inserts all text with textContent.
     source = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
 
-    for unsafe in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write"):
-        assert unsafe not in source, f"app.js uses {unsafe}"
+    assert unsafe not in source, f"app.js uses {unsafe}"
+
+
+def test_styles_respect_reduced_motion() -> None:
+    # The flow dashboard animates; people who ask for less motion get none.
+    source = (STATIC_DIR / "styles.css").read_text(encoding="utf-8")
+
+    assert "@media (prefers-reduced-motion: reduce)" in source
