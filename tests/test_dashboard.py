@@ -35,6 +35,15 @@ def test_static_assets_are_served(client: TestClient, path: str, content_type: s
     assert content_type in response.headers["content-type"]
 
 
+@pytest.mark.parametrize("path", ["/", "/static/app.js", "/static/styles.css"])
+def test_dashboard_files_are_always_revalidated(client: TestClient, path: str) -> None:
+    # Otherwise a browser can mix a cached index.html with a newer app.js.
+    response = client.get(path)
+
+    assert response.headers["cache-control"] == "no-cache"
+    assert "etag" in response.headers  # so revalidation can answer 304
+
+
 def test_missing_static_file_is_404(client: TestClient) -> None:
     assert client.get("/static/nope.js").status_code == 404
 
