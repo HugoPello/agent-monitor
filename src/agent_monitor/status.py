@@ -55,10 +55,73 @@ _NOTIFICATION_STATUS: dict[str, AgentStatus] = {
 _ACTIVE = {AgentStatus.WORKING, AgentStatus.RUNNING_TOOL}
 
 
+class Activity(StrEnum):
+    """What an agent is doing, coarse enough to read at a glance.
+
+    A heuristic layered on top of ``AgentStatus``: hooks tell us *which* tool
+    runs, never *why*, so "researching" really means "running a tool that
+    usually reads". Keeping it derived from the status reuses the status
+    rules (stale, waiting, subagents not driving the session) unchanged.
+    """
+
+    IDLE = "idle"
+    THINKING = "thinking"  # working, no tool running
+    RESEARCHING = "researching"
+    CODING = "coding"
+    RUNNING = "running"  # shell commands
+    DELEGATING = "delegating"  # inside an Agent tool call
+    WORKING = "working"  # a tool we don't classify (MCP tools included)
+    WAITING_INPUT = "waiting_input"
+    STALE = "stale"
+    ENDED = "ended"
+
+
+# Tool name -> activity while that tool runs. Names are the exact strings
+# from the Claude Code tools reference (code.claude.com/docs/en/tools-reference).
+# Anything not listed, including MCP tools (``mcp__<server>__<tool>``), falls
+# back to Activity.WORKING. Extend this table to classify more tools.
+TOOL_ACTIVITY: dict[str, Activity] = {
+    "Read": Activity.RESEARCHING,
+    "Grep": Activity.RESEARCHING,
+    "Glob": Activity.RESEARCHING,
+    "WebSearch": Activity.RESEARCHING,
+    "WebFetch": Activity.RESEARCHING,
+    "LSP": Activity.RESEARCHING,
+    "Edit": Activity.CODING,
+    "Write": Activity.CODING,
+    "NotebookEdit": Activity.CODING,
+    "Bash": Activity.RUNNING,
+    "PowerShell": Activity.RUNNING,
+    "Agent": Activity.DELEGATING,
+    "Task": Activity.DELEGATING,  # the Agent tool's name before Claude Code 2.1.63
+}
+
+# Activity for every status that is not "running a tool".
+_STATUS_ACTIVITY: dict[AgentStatus, Activity] = {
+    AgentStatus.IDLE: Activity.IDLE,
+    AgentStatus.WORKING: Activity.THINKING,
+    AgentStatus.WAITING_INPUT: Activity.WAITING_INPUT,
+    AgentStatus.ENDED: Activity.ENDED,
+    AgentStatus.STALE: Activity.STALE,
+    AgentStatus.UNKNOWN: Activity.IDLE,
+}
+
+
+def activity_for(status: AgentStatus, tool_name: str | None) -> Activity:
+    """The activity implied by a status and the tool running, if any."""
+    if status is AgentStatus.RUNNING_TOOL:
+        return TOOL_ACTIVITY.get(tool_name or "", Activity.WORKING)
+    return _STATUS_ACTIVITY[status]
+
+
 @dataclass(frozen=True)
 class StatusResult:
     status: AgentStatus
     current_tool: str | None = None
+
+    @property
+    def activity(self) -> Activity:
+        return activity_for(self.status, self.current_tool)
 
 
 def status_from_event(event: StoredEvent) -> AgentStatus | None:

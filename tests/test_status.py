@@ -7,8 +7,11 @@ import pytest
 
 from agent_monitor.models import StoredEvent
 from agent_monitor.status import (
+    TOOL_ACTIVITY,
+    Activity,
     AgentStatus,
     SubagentStatus,
+    activity_for,
     build_summary,
     compute_status,
     compute_subagents,
@@ -125,6 +128,83 @@ class TestStale:
 
         now = T0 + timedelta(minutes=16)
         assert status_of(*events, now=now) == AgentStatus.RUNNING_TOOL
+
+
+class TestActivityFor:
+    @pytest.mark.parametrize(
+        ("tool", "expected"),
+        [
+            ("Read", Activity.RESEARCHING),
+            ("Grep", Activity.RESEARCHING),
+            ("Glob", Activity.RESEARCHING),
+            ("WebSearch", Activity.RESEARCHING),
+            ("WebFetch", Activity.RESEARCHING),
+            ("LSP", Activity.RESEARCHING),
+            ("Edit", Activity.CODING),
+            ("Write", Activity.CODING),
+            ("NotebookEdit", Activity.CODING),
+            ("Bash", Activity.RUNNING),
+            ("PowerShell", Activity.RUNNING),
+            ("Agent", Activity.DELEGATING),
+            ("Task", Activity.DELEGATING),
+        ],
+    )
+    def test_running_tool_uses_the_table(self, tool: str, expected: Activity) -> None:
+        assert activity_for(AgentStatus.RUNNING_TOOL, tool) == expected
+
+    def test_every_table_entry_is_tested(self) -> None:
+        # Forces a new table entry to come with a test case above.
+        assert len(TOOL_ACTIVITY) == 13
+
+    @pytest.mark.parametrize(
+        "tool", ["mcp__github__create_issue", "SomeFutureTool", "read", "", None]
+    )
+    def test_unknown_tools_fall_back_to_working(self, tool: str | None) -> None:
+        assert activity_for(AgentStatus.RUNNING_TOOL, tool) == Activity.WORKING
+
+    @pytest.mark.parametrize(
+        ("status", "expected"),
+        [
+            (AgentStatus.IDLE, Activity.IDLE),
+            (AgentStatus.WORKING, Activity.THINKING),
+            (AgentStatus.WAITING_INPUT, Activity.WAITING_INPUT),
+            (AgentStatus.ENDED, Activity.ENDED),
+            (AgentStatus.STALE, Activity.STALE),
+            (AgentStatus.UNKNOWN, Activity.IDLE),
+        ],
+    )
+    def test_other_statuses_ignore_the_tool(self, status: AgentStatus, expected: Activity) -> None:
+        assert activity_for(status, "Bash") == expected
+
+
+class TestSessionActivity:
+    def activity_of(self, *events: StoredEvent, now: datetime = T0) -> Activity:
+        return compute_status(list(events), now, STALE_AFTER).activity
+
+    def test_thinking_between_tools(self) -> None:
+        events = [ev("PreToolUse", tool_name="Read"), ev("PostToolUse", tool_name="Read")]
+
+        assert self.activity_of(*events) == Activity.THINKING
+
+    def test_delegating_while_subagent_works(self) -> None:
+        events = [
+            ev("PreToolUse", tool_name="Agent"),
+            ev("SubagentStart", agent_id="a1"),
+            ev("PreToolUse", agent_id="a1", tool_name="Bash"),
+        ]
+
+        assert self.activity_of(*events) == Activity.DELEGATING
+
+    def test_stale_tool_call_is_stale_not_its_tool(self) -> None:
+        events = [ev("PreToolUse", tool_name="Bash")]
+        now = T0 + STALE_AFTER + timedelta(seconds=1)
+
+        assert self.activity_of(*events, now=now) == Activity.STALE
+
+    def test_exactly_at_threshold_keeps_tool_activity(self) -> None:
+        events = [ev("PreToolUse", tool_name="Bash")]
+
+        assert self.activity_of(*events, now=T0 + STALE_AFTER) == Activity.RUNNING
 
 
 class TestComputeSubagents:
