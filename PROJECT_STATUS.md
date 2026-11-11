@@ -97,6 +97,23 @@ ruff is clean and the PR is merged.
 - [x] XSS guard extended (DOMParser, setHTMLUnsafe, inline handlers...)
 - [x] Verified in a browser with demo data (desktop/mobile, dark/light)
 
+Design review with the `impeccable` skill (critique: isolated design review
+plus detector). First run 23/36; its five priority issues are fixed here:
+
+- [x] "Finished" activity: a turn that ended with `Stop` is no longer "Idle"
+- [x] Waiting sessions surface: urgency order, "(1) waiting" tab title,
+      tinted stage, polite screen-reader announcements, named Details buttons
+- [x] Timeline as a full-screen sheet below 900px; focus moves into it
+- [x] Finished nodes keep 4.5:1 text (fade the frame, not the label)
+- [x] Plain-language timeline ("You asked", "Tool failed"), raw hook name kept small
+- [x] Dashboard files served with `Cache-Control: no-cache` (a cached
+      index.html could meet a newer app.js)
+
+Second run: still 23/36 with different, deeper issues (three P1: the stage
+doesn't say why a session needs you or that a step failed; opening Details
+reflows the desktop grid; the mobile sheet is not a modal dialog). Left for
+the next step; see `.impeccable/critique/` (local, not committed).
+
 ## Phase 9 — Demo and docs (`docs/flow-demo`)
 
 - [ ] `scripts/demo.py` with parallel subagents
