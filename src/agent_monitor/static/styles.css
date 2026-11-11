@@ -67,6 +67,11 @@
   box-sizing: border-box;
 }
 
+/* Elements with their own display (flex, grid) would otherwise ignore it. */
+[hidden] {
+  display: none !important;
+}
+
 html {
   accent-color: var(--accent);
   scrollbar-color: var(--border) transparent;
@@ -260,6 +265,12 @@ body {
   column-gap: clamp(36px, 9vw, 80px);
 }
 
+@media (max-width: 480px) {
+  .flow.has-subagents {
+    grid-template-columns: minmax(0, 7rem) minmax(0, 1fr);
+  }
+}
+
 .stage.is-ended .flow {
   opacity: 0.6;
 }
@@ -319,7 +330,7 @@ body {
 
 .node.is-faded,
 .link.is-faded {
-  opacity: 0.45;
+  opacity: 0.55;
 }
 
 /* ---- Motion ------------------------------------------------------------ */
@@ -431,6 +442,7 @@ body {
 .subagent-nodes {
   display: grid;
   gap: 6px;
+  max-width: 20rem;
   margin: 0;
   padding: 0;
   list-style: none;
