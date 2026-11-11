@@ -9,9 +9,11 @@
 //   3. Reload /agents every 30 s anyway: "stale" is computed by the server
 //      when asked, and a silent session sends no events to trigger it.
 //
-// Rendering: one "stage" per session, with the main agent on the left and
-// its subagents on the right. Stages and nodes are created once and then
-// updated in place (keyed by session_id / agent_id). Rebuilding them on
+// Rendering: one element per session. A live session is a "stage" (the main
+// agent on the left, its subagents on the right, flows between them); a
+// session at rest (finished, idle or ended, with nothing running) folds into
+// a compact row under "At rest". Elements and nodes are created once and
+// updated in place (keyed by session_id / agent_id); rebuilding them on
 // every event would restart their CSS animations.
 //
 // Connectors are an SVG drawn behind the nodes. The nodes are laid out by CSS
@@ -74,6 +76,8 @@ const URGENCY = {
   ended: 5,
 };
 const BASE_TITLE = document.title;
+// Activities of a session with nothing left to watch.
+const AT_REST = new Set(["finished", "idle", "ended"]);
 // Matches the CSS breakpoint: above it the timeline is a side drawer that
 // leaves the overview usable; below it, a modal full-screen sheet.
 const wideScreen = window.matchMedia("(min-width: 900px)");
@@ -90,6 +94,10 @@ const dom = {
   connection: document.getElementById("connection"),
   empty: document.getElementById("empty"),
   agentList: document.getElementById("agent-list"),
+  liveEmpty: document.getElementById("live-empty"),
+  restSection: document.getElementById("rest"),
+  restList: document.getElementById("rest-list"),
+  summary: document.getElementById("summary"),
   timeline: document.getElementById("timeline"),
   timelineTitle: document.getElementById("timeline-title"),
   timelineSubject: document.getElementById("timeline-subject"),
@@ -237,6 +245,19 @@ function byStageOrder(a, b) {
   return urgency || new Date(b.started_at) - new Date(a.started_at);
 }
 
+/** A session moves to "At rest" once nothing in it is running. */
+function isAtRest(agent) {
+  return AT_REST.has(agent.activity) && !agent.subagents.some((s) => s.status === "running");
+}
+
+/** "Finished · Explore done": the state line of a row at rest. */
+function restState(agent) {
+  const parts = [activityLabel(agent.activity)];
+  const done = agent.subagents.filter((s) => s.status === "done").map((s) => s.agent_type);
+  if (done.length) parts.push(`${done.filter(Boolean).join(", ") || "subagents"} done`);
+  return parts.join(" · ");
+}
+
 /** "agent-monitor", or "(2) waiting · agent-monitor" when sessions need you. */
 function pageTitle(agents) {
   const waiting = agents.filter((agent) => agent.activity === "waiting_input").length;
@@ -254,10 +275,11 @@ function createStage(sessionId) {
   const item = el("li", "stage");
 
   const head = el("header", "stage-head");
-  const project = el("span", "project");
+  const project = el("h3", "project"); // a heading, so sessions are reachable by heading
   const meta = el("span", "stage-meta");
+  const rest = el("span", "rest-state");
   const time = el("span", "time");
-  meta.append(el("span", "session-id", shortId(sessionId)), time);
+  meta.append(rest, el("span", "session-id", shortId(sessionId)), time);
   const details = el("button", "details-button", "Details");
   details.type = "button";
   details.dataset.sessionId = sessionId;
@@ -276,7 +298,7 @@ function createStage(sessionId) {
   links.setAttribute("aria-hidden", "true"); // decorative: the nodes carry the text
   const main = el("div", "node node-main");
   const mainActivity = el("span", "node-activity");
-  main.append(el("span", "visually-hidden", "Main agent: "), mainActivity);
+  main.append(el("span", "node-kind", "Main"), mainActivity);
   const subList = el("ul", "subagent-nodes");
   subList.setAttribute("aria-label", "Subagents");
   const doneChip = el("li", "done-chip");
@@ -288,6 +310,7 @@ function createStage(sessionId) {
   const stage = {
     item,
     project,
+    rest,
     time,
     details,
     flow,
@@ -310,7 +333,7 @@ function createStage(sessionId) {
 
 function createSubNode(stage, animate) {
   const node = el("li", "node node-sub");
-  const type = el("span", "node-type");
+  const type = el("span", "node-kind");
   const activity = el("span", "node-activity");
   node.append(type, activity);
   stage.subList.insertBefore(node, stage.doneChip);
@@ -435,6 +458,8 @@ function updateStage(stage, agent, animate) {
   stage.failedSteps = agent.failed_steps;
   updateNotes(stage, agent);
   stage.item.title = agent.cwd || "";
+  stage.item.dataset.activity = agent.activity;
+  stage.rest.textContent = restState(agent);
   stage.item.classList.toggle("is-ended", agent.activity === "ended");
   stage.item.classList.toggle("is-waiting", agent.activity === "waiting_input");
   stage.item.classList.toggle("is-selected", selected);
@@ -493,35 +518,52 @@ const resizeObserver = new ResizeObserver((entries) => {
   }
 });
 
-/** Sync every stage with state.agents. `animate`: the change was seen live. */
+/** Put `items` in `list` in this order, moving nodes only when it changed. */
+function syncList(list, items) {
+  // Moving a node restarts its CSS animations, so leave a list alone when
+  // its order is already right.
+  const current = list.children;
+  if (items.length !== current.length || items.some((item, i) => item !== current[i])) {
+    list.replaceChildren(...items);
+  }
+}
+
+/** Sync every session with state.agents. `animate`: the change was seen live. */
 function renderAgents(animate = false) {
   const agents = [...state.agents.values()].sort(byStageOrder);
-  const items = agents.map((agent) => {
-    let stage = state.stages.get(agent.session_id);
-    if (!stage) {
-      stage = createStage(agent.session_id);
-      state.stages.set(agent.session_id, stage);
+  for (const agent of agents) {
+    if (!state.stages.has(agent.session_id)) {
+      state.stages.set(agent.session_id, createStage(agent.session_id));
     }
-    return stage.item;
-  });
+  }
 
-  // Update before inserting: a new stage then enters the page already in
+  // Update before inserting: a new element then enters the page already in
   // its activity colours, instead of transitioning from the default grey.
   for (const agent of agents) {
     updateStage(state.stages.get(agent.session_id), agent, animate);
   }
 
-  // Move nodes only when the order really changed: moving a node restarts
-  // its CSS animations.
-  const current = dom.agentList.children;
-  if (items.length !== current.length || items.some((item, i) => item !== current[i])) {
-    dom.agentList.replaceChildren(...items);
+  const live = [];
+  const resting = [];
+  for (const agent of agents) {
+    const stage = state.stages.get(agent.session_id);
+    const atRest = isAtRest(agent);
+    stage.item.classList.toggle("stage", !atRest);
+    stage.item.classList.toggle("rest-row", atRest);
+    (atRest ? resting : live).push(stage.item);
   }
+  syncList(dom.agentList, live);
+  syncList(dom.restList, resting);
+
   dom.empty.hidden = agents.length > 0;
+  dom.liveEmpty.hidden = live.length > 0 || agents.length === 0;
+  dom.restSection.hidden = resting.length === 0;
   document.title = pageTitle(agents);
 
-  // Connectors last: they measure the nodes, so the page must be final.
-  for (const agent of agents) drawLinks(state.stages.get(agent.session_id));
+  // Flows last: they measure the nodes, so the page must be final.
+  for (const agent of agents) {
+    if (!isAtRest(agent)) drawLinks(state.stages.get(agent.session_id));
+  }
 }
 
 // ---- Timeline (behind each stage's "Details" button) ----------------------
@@ -558,7 +600,7 @@ function renderTimeline() {
 }
 
 function updateRelativeTimes() {
-  for (const node of dom.agentList.querySelectorAll("[data-time]")) {
+  for (const node of document.querySelectorAll(".layout [data-time]")) {
     node.textContent = relativeTime(node.dataset.time);
   }
 }
@@ -668,7 +710,7 @@ function connectStream() {
 
 // ---- Start ----------------------------------------------------------------
 
-dom.agentList.addEventListener("click", (e) => {
+document.querySelector(".layout").addEventListener("click", (e) => {
   const button = e.target.closest(".details-button");
   if (!button) return;
   if (button.dataset.sessionId === state.selected) closeTimeline();

@@ -9,7 +9,16 @@
   </head>
   <body>
     <header class="topbar">
-      <h1 class="brand">agent-monitor</h1>
+      <h1 class="brand">
+        <svg class="brand-mark" viewBox="0 0 20 20" width="20" height="20" aria-hidden="true">
+          <circle cx="5" cy="10" r="3" fill="none" stroke="currentColor" stroke-width="1.5" />
+          <circle cx="15" cy="4.5" r="2.2" fill="currentColor" />
+          <circle cx="15" cy="15.5" r="2.2" fill="currentColor" />
+          <path d="M8 9 13 5.5M8 11l5 3.5" fill="none" stroke="currentColor" stroke-width="1.3" />
+        </svg>
+        agent-monitor
+      </h1>
+      <nav id="summary" class="summary" aria-label="Attention summary"></nav>
       <span id="connection" class="connection" role="status" aria-live="polite" data-state="connecting">
         connecting…
       </span>
@@ -19,12 +28,19 @@
     <p id="announcer" class="visually-hidden" aria-live="polite"></p>
 
     <main class="layout">
-      <section class="sessions" aria-labelledby="sessions-title">
-        <h2 id="sessions-title" class="section-title">Sessions</h2>
-        <p id="empty" class="empty" hidden>
-          No sessions yet. Enable the hook in a project and start Claude Code.
-        </p>
+      <p id="empty" class="empty" hidden>
+        No sessions yet. Enable the hook in a project and start Claude Code.
+      </p>
+
+      <section class="sessions" aria-labelledby="live-title">
+        <h2 id="live-title" class="section-title">Live</h2>
+        <p id="live-empty" class="quiet-note" hidden>Nothing running.</p>
         <ul id="agent-list" class="agent-list"></ul>
+      </section>
+
+      <section id="rest" class="sessions" aria-labelledby="rest-title" hidden>
+        <h2 id="rest-title" class="section-title">At rest</h2>
+        <ul id="rest-list" class="rest-list"></ul>
       </section>
 
       <!-- A <dialog>: modal sheet on small screens, side drawer on wide ones
