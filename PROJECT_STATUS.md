@@ -148,5 +148,13 @@ Contract in `.impeccable/surfaces/`, system documented in `DESIGN.md`.
 
 ## Phase 10 — Demo and docs (`docs/flow-demo`)
 
-- [ ] `scripts/demo.py` with parallel subagents
-- [ ] README: features, activities, GIF caption
+- [x] `scripts/demo.py` replays three sessions in about 40 s: three
+      subagents in parallel, one failing a test run and retrying, a
+      permission prompt, a session already ended (for "At rest")
+- [x] `tests/test_demo.py` checks the end state: activities, three finished
+      subagents, the failure attributed to the right subagent and tool
+- [x] README: features of the live circuit, a "Status and activity" section
+      with the tool → activity table, GIF caption, design decision on
+      animations showing only what hooks prove
+- [x] Demo pacing checked live in a browser
+- [ ] `docs/demo.gif` re-recorded on the new design (by the owner)
