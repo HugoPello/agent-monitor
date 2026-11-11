@@ -532,6 +532,9 @@ function selectSession(sessionId) {
   dom.timeline.hidden = false;
   renderAgents();
   renderTimeline();
+  // Take focus (and the eye) to what just opened: on small screens it is a
+  // full-screen sheet, on wide ones a side panel that may be off-screen.
+  dom.timelineTitle.focus();
   loadTimeline(sessionId);
 }
 

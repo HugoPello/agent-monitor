@@ -574,6 +574,38 @@ body {
   }
 }
 
+/* Below the two-column layout the timeline would open under every stage,
+   out of sight. Show it as a full-screen sheet instead. */
+@media (max-width: 899px) {
+  .timeline {
+    position: fixed;
+    inset: 0;
+    z-index: 10;
+    padding-top: 0;
+    border: 0;
+    border-radius: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .timeline-header {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding-top: 16px;
+    background: var(--surface);
+  }
+
+  body:has(.timeline:not([hidden])) {
+    overflow: hidden; /* the page behind the sheet stays put */
+  }
+}
+
+/* Focused from script when the timeline opens; not a control. */
+#timeline-title:focus {
+  outline: none;
+}
+
 .timeline-header {
   display: flex;
   align-items: baseline;
