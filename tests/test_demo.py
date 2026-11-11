@@ -23,19 +23,31 @@ def demo() -> ModuleType:
     return module
 
 
-def test_demo_creates_two_finished_sessions_with_a_subagent(
+def test_demo_ends_with_every_session_at_rest(
     demo: ModuleType, running_server: RunningServer
 ) -> None:
     exit_code = demo.main(["--url", f"{running_server.base_url}/events", "--speed", "0"])
 
     with urllib.request.urlopen(f"{running_server.base_url}/agents") as response:
-        agents = json.loads(response.read())
+        agents = {Path(a["cwd"]).name: a for a in json.loads(response.read())}
 
     assert exit_code == 0
-    assert sorted(Path(a["cwd"]).name for a in agents) == ["portfolio-site", "weather-app"]
-    assert all(a["status"] == "idle" for a in agents)  # both end with Stop
-    [weather] = [a for a in agents if a["cwd"].endswith("weather-app")]
-    assert [(s["agent_type"], s["status"]) for s in weather["subagents"]] == [("Explore", "done")]
+    assert {name: a["activity"] for name, a in agents.items()} == {
+        "weather-app": "finished",
+        "portfolio-site": "finished",
+        "notes-cli": "ended",
+    }
+    weather = agents["weather-app"]
+    assert sorted((s["agent_type"], s["status"]) for s in weather["subagents"]) == [
+        ("Explore", "done"),
+        ("Explore", "done"),
+        ("general-purpose", "done"),
+    ]
+    # The test writer's failed run stays visible for the rest of the turn.
+    assert weather["failed_steps"] == 1
+    assert weather["last_failure_agent"] == "general-purpose"
+    assert weather["last_failure_tool"] == "Bash"
+    assert agents["portfolio-site"]["failed_steps"] == 0
 
 
 def test_demo_reports_unreachable_server(
