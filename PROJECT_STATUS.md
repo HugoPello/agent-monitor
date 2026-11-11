@@ -124,7 +124,21 @@ independent reviews; the remaining issues (failure tied to its node,
 attention hierarchy, empty cards, palette families) mostly belong to the
 shell redesign. Reports live in `.impeccable/critique/` (local, ignored).
 
-## Phase 9 — Demo and docs (`docs/flow-demo`)
+## Phase 9 — Shell redesign (planned)
+
+The flow becomes the shell instead of living inside a grid of identical
+cards. Start with `impeccable init` (PRODUCT.md) and new-work. Decisions
+already taken after the Phase 8 critiques:
+
+- [ ] Motion: only "Waiting for you" (and the connectors' flow) moves;
+      busy nodes no longer breathe
+- [ ] Colour families instead of one colour per activity: needs you
+      (amber), problem (red), busy (one hue, the label carries the nuance),
+      at rest (green / grey); unify "Done" with "Finished"
+- [ ] Open critique items: failure tied to the node that failed, a summary
+      with jump links, compact rows for quiet sessions, keyboard shortcuts
+
+## Phase 10 — Demo and docs (`docs/flow-demo`)
 
 - [ ] `scripts/demo.py` with parallel subagents
 - [ ] README: features, activities, GIF caption
