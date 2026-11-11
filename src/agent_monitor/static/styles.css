@@ -67,6 +67,15 @@
   box-sizing: border-box;
 }
 
+html {
+  accent-color: var(--accent);
+  scrollbar-color: var(--border) transparent;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -196,6 +205,7 @@ body {
 .stage-meta {
   display: flex;
   gap: 12px;
+  font-variant-numeric: tabular-nums;
   color: var(--muted);
   font-size: 12px;
 }
@@ -550,12 +560,21 @@ body {
 }
 
 .icon-button {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  margin: -6px -6px 0 0;
   border: 0;
+  border-radius: 6px;
   background: none;
   color: var(--muted);
-  font-size: 20px;
-  line-height: 1;
   cursor: pointer;
+}
+
+.icon-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .icon-button:hover {
@@ -593,6 +612,7 @@ body {
 
 .event-time {
   grid-row: span 2;
+  font-variant-numeric: tabular-nums;
   color: var(--muted);
   font-family: var(--mono);
   font-size: 12px;
