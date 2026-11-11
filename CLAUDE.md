@@ -23,6 +23,7 @@ scripts/             developer scripts (demo.py replays fictional sessions)
 tests/               pytest suite
 docs/                README assets (demo.gif)
 .claude/agents/      project subagents (researcher)
+.claude/skills/      project skills (impeccable, for UI design work)
 ```
 
 ## Commands
