@@ -18,6 +18,19 @@
   --waiting-bg: #fef3c7;   --waiting-fg: #a15c07;
   --ended-bg: #f2f4f7;     --ended-fg: #98a2b3;
   --stale-bg: #fee4e2;     --stale-fg: #b42318;
+
+  /* Activity colours (node accent and label). All pass 4.5:1 on --surface. */
+  --act-idle: #475467;
+  --act-thinking: #1d4ed8;
+  --act-researching: #0e7490;
+  --act-coding: #7c3aed;
+  --act-running: #c2410c;
+  --act-delegating: #4f46e5;
+  --act-working: #0369a1;
+  --act-waiting: #a15c07;
+  --act-stale: #b42318;
+  --act-ended: #667085;
+  --shadow: 0 1px 2px rgb(16 24 40 / 0.06), 0 1px 3px rgb(16 24 40 / 0.08);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -35,11 +48,37 @@
     --waiting-bg: #3d2d0a;   --waiting-fg: #fcd34d;
     --ended-bg: #1d2029;     --ended-fg: #6b7280;
     --stale-bg: #3d1414;     --stale-fg: #fca5a5;
+
+    --act-idle: #b3b9c6;
+    --act-thinking: #8fb4ff;
+    --act-researching: #5eead4;
+    --act-coding: #c4b5fd;
+    --act-running: #fdba74;
+    --act-delegating: #a5b4fc;
+    --act-working: #7dd3fc;
+    --act-waiting: #fcd34d;
+    --act-stale: #fca5a5;
+    --act-ended: #8b93a5;
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 1px 3px rgb(0 0 0 / 0.3);
   }
 }
 
 * {
   box-sizing: border-box;
+}
+
+/* Elements with their own display (flex, grid) would otherwise ignore it. */
+[hidden] {
+  display: none !important;
+}
+
+html {
+  accent-color: var(--accent);
+  scrollbar-color: var(--border) transparent;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
 body {
@@ -128,53 +167,39 @@ body {
   text-align: center;
 }
 
-/* ---- Session cards ---------------------------------------------------- */
+/* ---- Stages: one per session ------------------------------------------ */
 
 .agent-list {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 400px), 1fr));
+  gap: 16px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.card {
-  display: block;
-  width: 100%;
-  padding: 14px 16px;
+.stage {
+  padding: 14px 16px 18px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 
-.card:hover {
-  border-color: var(--accent);
-}
-
-.card:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.card[aria-pressed="true"] {
+.stage.is-selected {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent);
 }
 
-.card-head {
+.stage-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 4px 12px;
 }
 
 .project {
+  min-width: 0;
   overflow: hidden;
   font-weight: 600;
   font-size: 15px;
@@ -182,78 +207,344 @@ body {
   white-space: nowrap;
 }
 
-.card-meta {
+.stage-meta {
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px 12px;
-  margin-top: 8px;
+  gap: 12px;
+  font-variant-numeric: tabular-nums;
   color: var(--muted);
   font-size: 12px;
 }
 
-.session-id,
-.tool {
+.session-id {
   font-family: var(--mono);
 }
 
-.tool {
-  color: var(--tool-fg);
-}
-
-/* ---- Status badges ---------------------------------------------------- */
-
-.badge {
-  flex-shrink: 0;
-  padding: 2px 8px;
-  border-radius: 999px;
+.details-button {
+  min-height: 32px;
+  margin-left: auto;
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  font: inherit;
   font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
-  background: var(--idle-bg);
-  color: var(--idle-fg);
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s, color 0.15s;
 }
 
-.status-working { background: var(--working-bg); color: var(--working-fg); }
-.status-running_tool { background: var(--tool-bg); color: var(--tool-fg); }
-.status-waiting_input { background: var(--waiting-bg); color: var(--waiting-fg); }
-.status-ended { background: var(--ended-bg); color: var(--ended-fg); }
-.status-stale { background: var(--stale-bg); color: var(--stale-fg); }
-.status-running { background: var(--working-bg); color: var(--working-fg); }
-.status-done { background: var(--ended-bg); color: var(--ended-fg); }
-
-/* "Waiting for you" is the state that needs attention. */
-.status-waiting_input {
-  animation: pulse 1.6s ease-in-out infinite;
+.details-button:hover {
+  border-color: var(--accent);
 }
 
-@keyframes pulse {
-  50% { opacity: 0.55; }
+.details-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
+.details-button[aria-expanded="true"] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  color: var(--accent);
+}
+
+/* ---- Flow: main agent -> subagents ------------------------------------- */
+
+.flow {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 10rem);
+  align-items: center;
+  margin-top: 14px;
+}
+
+.flow.has-subagents {
+  /* The gap between the columns is where the connectors run. */
+  grid-template-columns: minmax(0, 9rem) minmax(0, 1fr);
+  column-gap: clamp(36px, 9vw, 80px);
+}
+
+@media (max-width: 480px) {
+  .flow.has-subagents {
+    grid-template-columns: minmax(0, 7rem) minmax(0, 1fr);
+  }
+}
+
+.stage.is-ended .flow {
+  opacity: 0.6;
+}
+
+/* Connectors: an SVG layer behind the nodes, sized by app.js to the flow. */
+.links {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.link-track,
+.link-flow,
+.link-back {
+  fill: none;
+  stroke-linecap: round;
+}
+
+.link-track {
+  stroke: color-mix(in srgb, var(--act) 40%, var(--border));
+  stroke-width: 1.5;
+  transition: stroke 0.3s;
+}
+
+.link-flow {
+  stroke: var(--act);
+  stroke-width: 2;
+  stroke-dasharray: 2 10;
+}
+
+.link-back {
+  stroke: var(--accent);
+  stroke-width: 3;
+  opacity: 0;
+}
+
+.link[data-state="done"] .link-flow,
+.link[data-activity="stale"] .link-flow {
+  opacity: 0;
+}
+
+.link[data-activity="stale"] .link-track {
+  stroke: var(--act-stale);
+  stroke-dasharray: 4 4;
+}
+
+.link.is-collapsed {
+  display: none;
+}
+
+.link {
+  transition: opacity 0.6s;
+}
+
+.node.is-faded,
+.link.is-faded {
+  opacity: 0.55;
+}
+
+/* ---- Motion ------------------------------------------------------------ */
+
+/* Busy agents breathe with a soft ring in their activity colour. */
+.node:is(
+    [data-activity="thinking"],
+    [data-activity="researching"],
+    [data-activity="coding"],
+    [data-activity="running"],
+    [data-activity="delegating"],
+    [data-activity="working"]
+  ) {
+  animation: node-busy 2.4s ease-in-out infinite;
+}
+
+@keyframes node-busy {
+  0%,
+  100% {
+    box-shadow: var(--shadow), 0 0 0 0 color-mix(in srgb, var(--act) 0%, transparent);
+  }
+  50% {
+    box-shadow: var(--shadow), 0 0 0 5px color-mix(in srgb, var(--act) 16%, transparent);
+  }
+}
+
+/* "Waiting for you" needs attention: a faster, stronger pulse. */
+.node[data-activity="waiting_input"] {
+  animation: node-waiting 1.6s ease-in-out infinite;
+}
+
+@keyframes node-waiting {
+  50% {
+    border-color: var(--act);
+    box-shadow: var(--shadow), 0 0 0 6px color-mix(in srgb, var(--act) 28%, transparent);
+  }
+}
+
+/* Task handed over: the connector draws itself from the main agent. */
+.link.is-new .link-track {
+  stroke-dasharray: var(--len);
+  animation: link-draw 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.link.is-new .link-flow {
+  opacity: 0;
+}
+
+@keyframes link-draw {
+  from { stroke-dashoffset: var(--len); }
+  to { stroke-dashoffset: 0; }
+}
+
+/* While the subagent runs, dashes keep flowing towards it. */
+.link-flow {
+  animation: link-flow 0.8s linear infinite;
+  transition: opacity 0.3s;
+}
+
+@keyframes link-flow {
+  to { stroke-dashoffset: -12; }
+}
+
+/* Result delivered: one bright segment runs back to the main agent... */
+.link-back {
+  stroke-dasharray: 18 var(--len);
+  stroke-dashoffset: 18px;
+}
+
+.link-back.is-pulsing {
+  opacity: 1;
+  animation: link-back 0.7s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+@keyframes link-back {
+  from { stroke-dashoffset: 18px; }
+  to { stroke-dashoffset: calc(-1 * var(--len)); }
+}
+
+/* ...and the main agent acknowledges it. */
+.node-main.is-receiving {
+  animation: node-receive 0.6s ease-out;
+}
+
+@keyframes node-receive {
+  from {
+    box-shadow: var(--shadow), 0 0 0 0 color-mix(in srgb, var(--accent) 50%, transparent);
+  }
+  to {
+    box-shadow: var(--shadow), 0 0 0 12px color-mix(in srgb, var(--accent) 0%, transparent);
+  }
+}
+
+/* Reduced motion: nothing moves. Colours and labels still change (with
+   their short transitions), and running connectors stay dashed. */
 @media (prefers-reduced-motion: reduce) {
-  .status-waiting_input { animation: none; }
+  .node,
+  .link-track,
+  .link-flow,
+  .link-back {
+    animation: none !important;
+  }
+
+  .link-back {
+    display: none;
+  }
 }
 
-.subagents {
-  display: flex;
-  flex-wrap: wrap;
+.subagent-nodes {
+  display: grid;
   gap: 6px;
-  margin: 10px 0 0;
-  padding: 10px 0 0;
-  border-top: 1px solid var(--border);
+  max-width: 20rem;
+  margin: 0;
+  padding: 0;
   list-style: none;
 }
 
-.subagent {
-  display: inline-flex;
+/* Each node and connector takes its colour from its activity. :where() has
+   zero specificity, so the [data-activity] rules below always win. */
+:where(.node, .link) { --act: var(--act-idle); }
+[data-activity="idle"] { --act: var(--act-idle); }
+[data-activity="thinking"] { --act: var(--act-thinking); }
+[data-activity="researching"] { --act: var(--act-researching); }
+[data-activity="coding"] { --act: var(--act-coding); }
+[data-activity="running"] { --act: var(--act-running); }
+[data-activity="delegating"] { --act: var(--act-delegating); }
+[data-activity="working"] { --act: var(--act-working); }
+[data-activity="waiting_input"] { --act: var(--act-waiting); }
+[data-activity="stale"] { --act: var(--act-stale); }
+[data-activity="ended"] { --act: var(--act-ended); }
+
+.node {
+  position: relative;
+  z-index: 1; /* above the connectors */
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  min-width: 0;
+  min-height: 44px;
+  padding: 6px 12px;
+  border: 1px solid color-mix(in srgb, var(--act) 45%, var(--border));
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  transition: border-color 0.3s, opacity 0.6s;
+}
+
+.node-main {
+  min-height: 64px;
+  padding: 10px 14px;
+}
+
+.node-activity {
+  display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
+  color: var(--act);
+  font-weight: 600;
+  white-space: nowrap;
+  transition: color 0.3s;
+}
+
+/* Colour is never the only signal: the label always says the activity. */
+.node-activity::before {
+  content: "";
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--act);
+  transition: background-color 0.3s;
+}
+
+.node-main .node-activity {
+  font-size: 15px;
+}
+
+.node-sub .node-activity {
+  font-size: 13px;
+}
+
+.node-type {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node[data-activity="stale"] {
+  border-style: dashed;
+}
+
+.node-sub[data-state="done"] {
+  box-shadow: none;
+}
+
+.done-chip {
+  justify-self: start;
+  padding: 2px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  color: var(--muted);
   font-size: 12px;
 }
 
-.subagent .badge {
-  font-size: 11px;
-  padding: 1px 6px;
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 /* ---- Timeline --------------------------------------------------------- */
@@ -281,12 +572,21 @@ body {
 }
 
 .icon-button {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  margin: -6px -6px 0 0;
   border: 0;
+  border-radius: 6px;
   background: none;
   color: var(--muted);
-  font-size: 20px;
-  line-height: 1;
   cursor: pointer;
+}
+
+.icon-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .icon-button:hover {
@@ -324,6 +624,7 @@ body {
 
 .event-time {
   grid-row: span 2;
+  font-variant-numeric: tabular-nums;
   color: var(--muted);
   font-family: var(--mono);
   font-size: 12px;
@@ -335,6 +636,11 @@ body {
   align-items: center;
   gap: 6px;
   font-weight: 600;
+}
+
+.event-title .tool {
+  color: var(--tool-fg);
+  font-family: var(--mono);
 }
 
 .agent-tag {
