@@ -103,6 +103,7 @@ class TestListAgents:
                 "activity": "ended",
                 "started_at": agent["subagents"][0]["started_at"],
                 "last_event_at": agent["subagents"][0]["last_event_at"],
+                "failed_steps": 0,
             }
         ]
 
