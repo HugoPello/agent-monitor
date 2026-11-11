@@ -46,6 +46,7 @@ const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
 const ACTIVITY_LABELS = {
   idle: "Idle",
+  finished: "Finished",
   thinking: "Thinking",
   researching: "Researching",
   coding: "Coding",
@@ -57,11 +58,32 @@ const ACTIVITY_LABELS = {
   ended: "Ended",
 };
 
+// Stage order, most urgent first. Sessions only move when their urgency
+// changes (moving a node restarts its animations), not on every event.
+const URGENCY = {
+  waiting_input: 0,
+  stale: 1,
+  thinking: 2,
+  researching: 2,
+  coding: 2,
+  running: 2,
+  delegating: 2,
+  working: 2,
+  finished: 3,
+  idle: 4,
+  ended: 5,
+};
+const BASE_TITLE = document.title;
+// Matches the CSS breakpoint: above it the timeline is a side drawer that
+// leaves the overview usable; below it, a modal full-screen sheet.
+const wideScreen = window.matchMedia("(min-width: 900px)");
+
 const state = {
   agents: new Map(), // session_id -> AgentSummary
   stages: new Map(), // session_id -> stage DOM refs (see createStage)
   selected: null, // session_id whose timeline is open
   events: [], // timeline of the selected session, oldest first
+  reopening: false, // the dialog is being reopened in another form
 };
 
 const dom = {
@@ -70,8 +92,10 @@ const dom = {
   agentList: document.getElementById("agent-list"),
   timeline: document.getElementById("timeline"),
   timelineTitle: document.getElementById("timeline-title"),
+  timelineSubject: document.getElementById("timeline-subject"),
   eventList: document.getElementById("event-list"),
   closeTimeline: document.getElementById("close-timeline"),
+  announcer: document.getElementById("announcer"),
 };
 
 // ---- Pure helpers ---------------------------------------------------------
@@ -172,6 +196,32 @@ function eventDetail(event) {
   }
 }
 
+// What each hook event means, in words. Unknown events show their raw name.
+const EVENT_LABELS = {
+  SessionStart: "Session started",
+  UserPromptSubmit: "You asked",
+  PreToolUse: "Tool started",
+  PostToolUse: "Tool finished",
+  PostToolUseFailure: "Tool failed",
+  Stop: "Finished its turn",
+  SubagentStart: "Subagent started",
+  SubagentStop: "Subagent finished",
+  SessionEnd: "Session ended",
+};
+
+const NOTIFICATION_LABELS = {
+  permission_prompt: "Needs your permission",
+  idle_prompt: "Waiting for your input",
+};
+
+/** A plain-language label for an event. */
+function eventLabel(event) {
+  if (event.hook_event_name === "Notification") {
+    return NOTIFICATION_LABELS[event.payload?.notification_type] || "Notification";
+  }
+  return EVENT_LABELS[event.hook_event_name] || event.hook_event_name;
+}
+
 /** Visual category of an event, used for the timeline's left border. */
 function eventKind(name) {
   if (name === "UserPromptSubmit") return "prompt";
@@ -181,14 +231,21 @@ function eventKind(name) {
   return "lifecycle";
 }
 
-/**
- * Stage order: live sessions first, newest session first. It only changes
- * when a session starts or ends, so stages don't jump around (and restart
- * their animations) every time a different session sends an event.
- */
+/** Most urgent first (see URGENCY), then newest session first. */
 function byStageOrder(a, b) {
-  const ended = Number(a.activity === "ended") - Number(b.activity === "ended");
-  return ended || new Date(b.started_at) - new Date(a.started_at);
+  const urgency = (URGENCY[a.activity] ?? 4) - (URGENCY[b.activity] ?? 4);
+  return urgency || new Date(b.started_at) - new Date(a.started_at);
+}
+
+/** "agent-monitor", or "(2) waiting · agent-monitor" when sessions need you. */
+function pageTitle(agents) {
+  const waiting = agents.filter((agent) => agent.activity === "waiting_input").length;
+  return waiting ? `(${waiting}) waiting · ${BASE_TITLE}` : BASE_TITLE;
+}
+
+/** Say something to screen readers without moving focus. */
+function announce(message) {
+  dom.announcer.textContent = message;
 }
 
 // ---- Stages (one per session) ---------------------------------------------
@@ -207,6 +264,13 @@ function createStage(sessionId) {
   details.setAttribute("aria-controls", "timeline");
   head.append(project, meta, details);
 
+  // Why the session needs you, or that something went wrong. Shown only
+  // when there is something to act on; the nodes stay free of tool names.
+  const notes = el("p", "stage-notes");
+  const waitingNote = el("span", "note note-waiting");
+  const failureNote = el("span", "note note-failure");
+  notes.append(waitingNote, failureNote);
+
   const flow = el("div", "flow");
   const links = svgEl("svg", "links");
   links.setAttribute("aria-hidden", "true"); // decorative: the nodes carry the text
@@ -220,7 +284,7 @@ function createStage(sessionId) {
   subList.append(doneChip);
   flow.append(links, main, subList);
 
-  item.append(head, flow);
+  item.append(head, notes, flow);
   const stage = {
     item,
     project,
@@ -233,6 +297,11 @@ function createStage(sessionId) {
     subList,
     doneChip,
     subs: new Map(), // agent_id -> subagent node refs (see createSubNode)
+    notes,
+    waitingNote,
+    failureNote,
+    activity: null, // last activity shown, to announce changes
+    failedSteps: 0, // last failure count shown, to announce new ones
   };
   stageByFlow.set(flow, stage);
   resizeObserver.observe(flow);
@@ -331,15 +400,49 @@ function collapseDone(stage, subagents) {
   stage.doneChip.textContent = `+${hidden.size} done`;
 }
 
+// Changes worth announcing when seen live: the moments the user is needed.
+const ANNOUNCEMENTS = {
+  waiting_input: (project) => `${project} is waiting for you`,
+  finished: (project) => `${project} finished its turn`,
+};
+
+function updateNotes(stage, agent) {
+  const reason =
+    agent.activity === "waiting_input"
+      ? oneLine(agent.waiting_reason || "Needs your permission", 120)
+      : "";
+  stage.waitingNote.textContent = reason;
+  stage.waitingNote.hidden = !reason;
+
+  const failed = agent.failed_steps;
+  stage.failureNote.textContent = failed
+    ? `${failed} ${failed === 1 ? "step" : "steps"} failed · ${clockTime(agent.last_failure_at)}`
+    : "";
+  stage.failureNote.hidden = !failed;
+  stage.notes.hidden = !reason && !failed;
+}
+
 function updateStage(stage, agent, animate) {
   const selected = agent.session_id === state.selected;
+  const project = projectName(agent.cwd);
+  if (animate && agent.activity !== stage.activity && ANNOUNCEMENTS[agent.activity]) {
+    announce(ANNOUNCEMENTS[agent.activity](project));
+  }
+  stage.activity = agent.activity;
+  if (animate && agent.failed_steps > stage.failedSteps) {
+    announce(`${project}: a step failed`);
+  }
+  stage.failedSteps = agent.failed_steps;
+  updateNotes(stage, agent);
   stage.item.title = agent.cwd || "";
   stage.item.classList.toggle("is-ended", agent.activity === "ended");
+  stage.item.classList.toggle("is-waiting", agent.activity === "waiting_input");
   stage.item.classList.toggle("is-selected", selected);
-  stage.project.textContent = projectName(agent.cwd);
+  stage.project.textContent = project;
   stage.time.dataset.time = agent.last_event_at;
   stage.time.textContent = relativeTime(agent.last_event_at);
   stage.details.setAttribute("aria-expanded", String(selected));
+  stage.details.setAttribute("aria-label", `Details for ${project}`);
 
   stage.main.dataset.activity = agent.activity;
   stage.mainActivity.textContent = activityLabel(agent.activity);
@@ -354,7 +457,6 @@ function updateStage(stage, agent, animate) {
   }
   collapseDone(stage, agent.subagents);
   stage.flow.classList.toggle("has-subagents", agent.subagents.length > 0);
-  drawLinks(stage);
 }
 
 /** Point the connectors at where the nodes are now. */
@@ -403,6 +505,12 @@ function renderAgents(animate = false) {
     return stage.item;
   });
 
+  // Update before inserting: a new stage then enters the page already in
+  // its activity colours, instead of transitioning from the default grey.
+  for (const agent of agents) {
+    updateStage(state.stages.get(agent.session_id), agent, animate);
+  }
+
   // Move nodes only when the order really changed: moving a node restarts
   // its CSS animations.
   const current = dom.agentList.children;
@@ -410,10 +518,10 @@ function renderAgents(animate = false) {
     dom.agentList.replaceChildren(...items);
   }
   dom.empty.hidden = agents.length > 0;
+  document.title = pageTitle(agents);
 
-  for (const agent of agents) {
-    updateStage(state.stages.get(agent.session_id), agent, animate);
-  }
+  // Connectors last: they measure the nodes, so the page must be final.
+  for (const agent of agents) drawLinks(state.stages.get(agent.session_id));
 }
 
 // ---- Timeline (behind each stage's "Details" button) ----------------------
@@ -424,11 +532,13 @@ function renderEvent(event) {
   if (fromSubagent) item.classList.add("from-subagent");
 
   const title = el("div", "event-title");
-  title.append(el("span", null, event.hook_event_name));
+  title.append(el("span", null, eventLabel(event)));
   if (event.tool_name) title.append(el("span", "tool", event.tool_name));
   if (fromSubagent) {
     title.append(el("span", "agent-tag", event.payload?.agent_type || shortId(event.agent_id)));
   }
+  // The raw hook name stays, small, for debugging.
+  title.append(el("span", "hook-name", event.hook_event_name));
 
   item.append(el("time", "event-time", clockTime(event.received_at)), title);
   const detail = eventDetail(event);
@@ -438,9 +548,11 @@ function renderEvent(event) {
 
 function renderTimeline() {
   const agent = state.agents.get(state.selected);
-  dom.timelineTitle.textContent = agent
-    ? `Timeline · ${projectName(agent.cwd)} · ${shortId(agent.session_id)}`
-    : "Timeline";
+  // The heading stays "Timeline"; the subject sits below it in normal case,
+  // so the session id reads exactly as it does on the stage.
+  dom.timelineSubject.textContent = agent
+    ? `${projectName(agent.cwd)} · ${shortId(agent.session_id)}`
+    : "";
   // Newest first, so live events appear at the top.
   dom.eventList.replaceChildren(...state.events.toReversed().map(renderEvent));
 }
@@ -485,20 +597,36 @@ async function loadTimeline(sessionId) {
   }
 }
 
+/**
+ * Open the timeline dialog in the form that suits the screen. showModal()
+ * gives the small-screen sheet focus containment, an inert page behind it
+ * and Esc for free; show() keeps the overview usable beside the drawer.
+ */
+function openTimelineDialog() {
+  if (wideScreen.matches) dom.timeline.show();
+  else dom.timeline.showModal();
+  dom.timelineTitle.focus(); // land on what just opened
+}
+
 function selectSession(sessionId) {
   state.selected = sessionId;
   state.events = [];
-  dom.timeline.hidden = false;
+  if (!dom.timeline.open) openTimelineDialog();
   renderAgents();
   renderTimeline();
   loadTimeline(sessionId);
 }
 
 function closeTimeline() {
+  dom.timeline.close(); // cleanup runs in the "close" listener below
+}
+
+/** The dialog closed (button, Esc, or the browser): reset and refocus. */
+function onTimelineClosed() {
+  if (state.reopening) return;
   const opener = state.stages.get(state.selected)?.details;
   state.selected = null;
   state.events = [];
-  dom.timeline.hidden = true;
   renderAgents();
   opener?.focus(); // give keyboard focus back to the button that opened it
 }
@@ -549,8 +677,20 @@ dom.agentList.addEventListener("click", (e) => {
 
 dom.closeTimeline.addEventListener("click", closeTimeline);
 
+// A modal dialog closes on Esc by itself; the drawer (non-modal) does not.
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && state.selected) closeTimeline();
+  if (e.key === "Escape" && dom.timeline.open) closeTimeline();
+});
+
+dom.timeline.addEventListener("close", onTimelineClosed);
+
+// Crossing the breakpoint with the timeline open: reopen it in the other form.
+wideScreen.addEventListener("change", () => {
+  if (!dom.timeline.open) return;
+  state.reopening = true;
+  dom.timeline.close();
+  state.reopening = false;
+  openTimelineDialog();
 });
 
 connectStream();

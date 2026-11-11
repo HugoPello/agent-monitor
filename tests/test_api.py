@@ -75,6 +75,8 @@ class TestListAgents:
         assert agent["cwd"] == "/project"
         assert agent["event_count"] == 3
         assert agent["subagents"] == []
+        assert agent["waiting_reason"] is None
+        assert agent["failed_steps"] == 0
 
     def test_most_recently_active_first(self, client: TestClient) -> None:
         post(client, "old", "SessionStart")

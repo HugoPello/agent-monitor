@@ -10,10 +10,12 @@ from agent_monitor.status import (
     TOOL_ACTIVITY,
     Activity,
     AgentStatus,
+    AgentSummary,
     SubagentStatus,
     SubagentSummary,
     activity_for,
     build_summary,
+    compute_failures,
     compute_status,
     compute_subagents,
 )
@@ -212,6 +214,53 @@ def subagents_of(*events: StoredEvent, now: datetime = T0) -> list[SubagentSumma
     return compute_subagents(list(events), now, STALE_AFTER)
 
 
+class TestFinishedTurn:
+    def activity_of(self, *events: StoredEvent) -> Activity:
+        return compute_status(list(events), T0, STALE_AFTER).activity
+
+    def test_stop_means_the_turn_is_finished(self) -> None:
+        events = [ev("SessionStart"), ev("UserPromptSubmit"), ev("Stop")]
+
+        assert self.activity_of(*events) == Activity.FINISHED
+
+    def test_fresh_session_is_idle(self) -> None:
+        assert self.activity_of(ev("SessionStart")) == Activity.IDLE
+
+    def test_idle_prompt_after_stop_stays_finished(self) -> None:
+        events = [
+            ev("UserPromptSubmit"),
+            ev("Stop"),
+            ev("Notification", notification_type="idle_prompt"),
+        ]
+
+        assert self.activity_of(*events) == Activity.FINISHED
+
+    def test_idle_prompt_on_a_fresh_session_stays_idle(self) -> None:
+        events = [ev("SessionStart"), ev("Notification", notification_type="idle_prompt")]
+
+        assert self.activity_of(*events) == Activity.IDLE
+
+    def test_new_prompt_starts_a_new_turn(self) -> None:
+        events = [ev("Stop"), ev("UserPromptSubmit")]
+
+        assert self.activity_of(*events) == Activity.THINKING
+
+    def test_new_session_after_stop_is_idle(self) -> None:
+        # e.g. /clear starts a new session id, but a resume can reuse one
+        events = [ev("Stop"), ev("SessionStart", source="resume")]
+
+        assert self.activity_of(*events) == Activity.IDLE
+
+    def test_subagent_events_are_not_turn_boundaries(self) -> None:
+        events = [ev("Stop"), ev("SubagentStop", agent_id="a1")]
+
+        assert self.activity_of(*events) == Activity.FINISHED
+
+    def test_activity_for_needs_both_idle_and_finished(self) -> None:
+        assert activity_for(AgentStatus.IDLE, None, turn_finished=True) == Activity.FINISHED
+        assert activity_for(AgentStatus.WORKING, None, turn_finished=True) == Activity.THINKING
+
+
 class TestComputeSubagents:
     def test_tracks_subagents_in_order_of_appearance(self) -> None:
         events = [
@@ -335,6 +384,81 @@ class TestSubagentStale:
         assert subagent.activity == Activity.STALE
 
 
+class TestFailures:
+    def test_counts_failures_in_the_current_turn(self) -> None:
+        events = [
+            ev("UserPromptSubmit"),
+            ev("PostToolUseFailure", at=timedelta(seconds=1), tool_name="Bash"),
+            ev("PostToolUseFailure", at=timedelta(seconds=2), agent_id="a1", tool_name="Edit"),
+            ev("PostToolUse", at=timedelta(seconds=3), tool_name="Bash"),
+        ]
+
+        failures = compute_failures(events)
+
+        assert failures.count == 2
+        assert failures.last_at == T0 + timedelta(seconds=2)
+
+    def test_a_new_prompt_starts_from_zero(self) -> None:
+        events = [
+            ev("UserPromptSubmit"),
+            ev("PostToolUseFailure", tool_name="Bash"),
+            ev("Stop"),
+            ev("UserPromptSubmit", at=timedelta(minutes=1)),
+        ]
+
+        assert compute_failures(events).count == 0
+        assert compute_failures(events).last_at is None
+
+    def test_failures_before_any_prompt_count(self) -> None:
+        assert compute_failures([ev("PostToolUseFailure", tool_name="Read")]).count == 1
+
+    def test_subagent_prompts_do_not_reset_the_turn(self) -> None:
+        events = [
+            ev("PostToolUseFailure", tool_name="Bash"),
+            ev("UserPromptSubmit", agent_id="a1"),
+        ]
+
+        assert compute_failures(events).count == 1
+
+
+class TestWaitingReason:
+    def summary_of(self, *events: StoredEvent) -> AgentSummary:
+        return build_summary("s1", list(events), T0, STALE_AFTER)
+
+    def test_permission_prompt_message_is_the_reason(self) -> None:
+        summary = self.summary_of(
+            ev("PreToolUse", tool_name="Bash"),
+            ev(
+                "Notification",
+                notification_type="permission_prompt",
+                message="Claude needs your permission to use Bash",
+            ),
+        )
+
+        assert summary.waiting_reason == "Claude needs your permission to use Bash"
+
+    def test_no_reason_once_no_longer_waiting(self) -> None:
+        summary = self.summary_of(
+            ev("Notification", notification_type="permission_prompt", message="perm"),
+            ev("PostToolUse", tool_name="Bash"),
+        )
+
+        assert summary.waiting_reason is None
+
+    def test_missing_message_gives_no_reason(self) -> None:
+        summary = self.summary_of(ev("Notification", notification_type="permission_prompt"))
+
+        assert summary.activity == Activity.WAITING_INPUT
+        assert summary.waiting_reason is None
+
+    def test_non_text_message_is_ignored(self) -> None:
+        summary = self.summary_of(
+            ev("Notification", notification_type="permission_prompt", message=42)
+        )
+
+        assert summary.waiting_reason is None
+
+
 def test_build_summary() -> None:
     events = [
         ev("SessionStart", cwd="/old"),
@@ -353,3 +477,6 @@ def test_build_summary() -> None:
     assert summary.last_event_at == T0 + timedelta(seconds=2)
     assert summary.event_count == 3
     assert summary.subagents == []
+    assert summary.waiting_reason is None
+    assert summary.failed_steps == 0
+    assert summary.last_failure_at is None

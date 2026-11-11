@@ -9,6 +9,8 @@
   --muted: #667085;
   --accent: #4f46e5;
   --radius: 10px;
+  --topbar-height: 52px;
+  --drawer-width: min(440px, 36vw);
   --mono: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
 
   /* Status colours: background / text */
@@ -21,6 +23,7 @@
 
   /* Activity colours (node accent and label). All pass 4.5:1 on --surface. */
   --act-idle: #475467;
+  --act-finished: #067647;
   --act-thinking: #1d4ed8;
   --act-researching: #0e7490;
   --act-coding: #7c3aed;
@@ -50,6 +53,7 @@
     --stale-bg: #3d1414;     --stale-fg: #fca5a5;
 
     --act-idle: #b3b9c6;
+    --act-finished: #75e0a7;
     --act-thinking: #8fb4ff;
     --act-researching: #5eead4;
     --act-coding: #c4b5fd;
@@ -94,6 +98,7 @@ body {
   position: sticky;
   top: 0;
   z-index: 1;
+  height: var(--topbar-height);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -143,10 +148,11 @@ body {
   margin: 0 auto;
 }
 
+/* The open drawer pushes the page instead of covering it: the stage grid
+   keeps its auto-fill tracks and simply fits fewer columns. */
 @media (min-width: 900px) {
-  .layout:has(.timeline:not([hidden])) {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    align-items: start;
+  body:has(.timeline[open]) .layout {
+    margin-right: var(--drawer-width);
   }
 }
 
@@ -184,6 +190,12 @@ body {
   border-radius: var(--radius);
   background: var(--surface);
   transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+/* A session that needs you is marked as a whole, not just its node. */
+.stage.is-waiting {
+  border-color: color-mix(in srgb, var(--act-waiting) 60%, var(--border));
+  background: color-mix(in srgb, var(--act-waiting) 6%, var(--surface));
 }
 
 .stage.is-selected {
@@ -249,6 +261,31 @@ body {
   color: var(--accent);
 }
 
+/* Why a stage needs you / what failed. Words first; colour only supports. */
+.stage-notes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  margin: 8px 0 0;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.note {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-waiting {
+  color: var(--act-waiting);
+}
+
+.note-failure {
+  color: var(--act-stale);
+}
+
 /* ---- Flow: main agent -> subagents ------------------------------------- */
 
 .flow {
@@ -271,8 +308,21 @@ body {
   }
 }
 
-.stage.is-ended .flow {
-  opacity: 0.6;
+/* An ended session recedes through its frame, never its text (an opacity
+   fade took its labels to about 2.4:1). */
+.stage.is-ended {
+  background: transparent;
+  border-style: dashed;
+}
+
+.stage.is-ended .node {
+  border-color: var(--border);
+  background: transparent;
+  box-shadow: none;
+}
+
+.stage.is-ended .link {
+  opacity: 0.5;
 }
 
 /* Connectors: an SVG layer behind the nodes, sized by app.js to the flow. */
@@ -328,9 +378,15 @@ body {
   transition: opacity 0.6s;
 }
 
-.node.is-faded,
+/* Finished work recedes through its frame and connector, never its text:
+   "Done" and the agent type keep their 4.5:1 contrast. */
 .link.is-faded {
-  opacity: 0.55;
+  opacity: 0.5;
+}
+
+.node.is-faded {
+  border-color: var(--border);
+  background: transparent;
 }
 
 /* ---- Motion ------------------------------------------------------------ */
@@ -452,6 +508,7 @@ body {
    zero specificity, so the [data-activity] rules below always win. */
 :where(.node, .link) { --act: var(--act-idle); }
 [data-activity="idle"] { --act: var(--act-idle); }
+[data-activity="finished"] { --act: var(--act-finished); }
 [data-activity="thinking"] { --act: var(--act-thinking); }
 [data-activity="researching"] { --act: var(--act-researching); }
 [data-activity="coding"] { --act: var(--act-coding); }
@@ -476,7 +533,7 @@ body {
   border-radius: 8px;
   background: var(--surface);
   box-shadow: var(--shadow);
-  transition: border-color 0.3s, opacity 0.6s;
+  transition: border-color 0.6s; /* not background: it would lag on a theme switch */
 }
 
 .node-main {
@@ -550,25 +607,83 @@ body {
 /* ---- Timeline --------------------------------------------------------- */
 
 .timeline {
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  padding: 0 16px 16px;
+  border: 0;
+  background: var(--surface);
+  color: var(--text);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* The header (title and close button) stays visible while events scroll. */
+.timeline-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding-top: 16px;
   background: var(--surface);
 }
 
+/* Wide screens: a non-modal drawer on the right, below the top bar. */
 @media (min-width: 900px) {
   .timeline {
-    position: sticky;
-    top: 72px;
-    max-height: calc(100vh - 92px);
-    overflow-y: auto;
+    position: fixed;
+    inset: var(--topbar-height) 0 0 auto;
+    width: var(--drawer-width);
+    height: auto;
+    max-width: none;
+    max-height: none;
+    margin: 0;
+    border-left: 1px solid var(--border);
+    box-shadow: -8px 0 24px rgb(16 24 40 / 0.08);
   }
+}
+
+/* Small screens: a modal sheet over the whole page. */
+.timeline:modal {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+}
+
+.timeline::backdrop {
+  background: rgb(16 24 40 / 0.4);
+}
+
+body:has(.timeline:modal) {
+  overflow: hidden; /* the page behind the sheet stays put */
+}
+
+/* Focused from script when the timeline opens; not a control. */
+#timeline-title:focus {
+  outline: none;
 }
 
 .timeline-header {
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.timeline-header > div {
+  min-width: 0; /* lets a long project name shrink to an ellipsis */
+}
+
+.timeline-header .section-title {
+  margin-bottom: 2px;
+}
+
+.timeline-subject {
+  margin: 0;
+  overflow: hidden;
+  font-weight: 600;
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .icon-button {
@@ -591,6 +706,15 @@ body {
 
 .icon-button:hover {
   color: var(--text);
+}
+
+/* Touch screens get a full-size target. */
+@media (pointer: coarse) {
+  .icon-button {
+    width: 44px;
+    height: 44px;
+    margin: -12px -12px 0 0;
+  }
 }
 
 .event-list {
@@ -641,6 +765,14 @@ body {
 .event-title .tool {
   color: var(--tool-fg);
   font-family: var(--mono);
+}
+
+.hook-name {
+  margin-left: auto;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 400;
 }
 
 .agent-tag {

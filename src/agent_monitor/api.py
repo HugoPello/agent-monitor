@@ -23,6 +23,8 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.responses import Response
+from starlette.types import Scope
 
 from agent_monitor import __version__
 from agent_monitor.broadcaster import Broadcaster
@@ -37,6 +39,21 @@ STREAM_EVENT_NAME = "agent_event"
 # The dashboard: plain HTML/CSS/JS shipped inside the package
 # (see [tool.setuptools.package-data] in pyproject.toml).
 STATIC_DIR = Path(__file__).parent / "static"
+
+# Browsers may cache index.html and app.js separately on their own
+# heuristics; after an upgrade they could run new JS against an old page.
+# "no-cache" makes them revalidate on every load, which is still cheap: an
+# unchanged file comes back as a 304 thanks to its ETag.
+DASHBOARD_CACHE_HEADERS = {"Cache-Control": "no-cache"}
+
+
+class DashboardFiles(StaticFiles):
+    """StaticFiles whose responses are always revalidated."""
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        response = await super().get_response(path, scope)
+        response.headers.update(DASHBOARD_CACHE_HEADERS)
+        return response
 
 
 class StreamMessage(BaseModel):
@@ -54,11 +71,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(title="agent-monitor", version=__version__)
     app.state.broadcaster = broadcaster  # exposed for tests
-    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    app.mount("/static", DashboardFiles(directory=STATIC_DIR), name="static")
 
     @app.get("/", include_in_schema=False)
     def dashboard() -> FileResponse:
-        return FileResponse(STATIC_DIR / "index.html")
+        return FileResponse(STATIC_DIR / "index.html", headers=DASHBOARD_CACHE_HEADERS)
 
     def summarize(session_id: str) -> AgentSummary:
         events = store.events_for_session(session_id)
