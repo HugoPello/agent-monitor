@@ -398,6 +398,38 @@ class TestFailures:
         assert failures.count == 2
         assert failures.last_at == T0 + timedelta(seconds=2)
 
+    def test_names_the_last_failed_tool_and_agent(self) -> None:
+        events = [
+            ev("UserPromptSubmit"),
+            ev("PostToolUseFailure", tool_name="Bash"),
+            ev(
+                "PostToolUseFailure",
+                at=timedelta(seconds=1),
+                agent_id="a1",
+                agent_type="coder",
+                tool_name="Edit",
+            ),
+        ]
+
+        failures = compute_failures(events)
+
+        assert (failures.last_tool, failures.last_agent_type) == ("Edit", "coder")
+
+    def test_main_agent_failure_has_no_agent_type(self) -> None:
+        failures = compute_failures([ev("PostToolUseFailure", tool_name="Bash")])
+
+        assert (failures.last_tool, failures.last_agent_type) == ("Bash", None)
+
+    def test_each_subagent_counts_its_own_failures(self) -> None:
+        events = [
+            ev("PostToolUseFailure", agent_id="a1", tool_name="Edit"),
+            ev("PostToolUseFailure", agent_id="a1", tool_name="Edit"),
+            ev("PostToolUse", agent_id="a2", tool_name="Read"),
+            ev("PostToolUseFailure", tool_name="Bash"),
+        ]
+
+        assert [s.failed_steps for s in subagents_of(*events)] == [2, 0]
+
     def test_a_new_prompt_starts_from_zero(self) -> None:
         events = [
             ev("UserPromptSubmit"),

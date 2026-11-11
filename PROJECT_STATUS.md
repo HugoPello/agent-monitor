@@ -124,19 +124,27 @@ independent reviews; the remaining issues (failure tied to its node,
 attention hierarchy, empty cards, palette families) mostly belong to the
 shell redesign. Reports live in `.impeccable/critique/` (local, ignored).
 
-## Phase 9 — Shell redesign (planned)
+## Phase 9 — Shell redesign (`feat/shell-redesign`)
 
-The flow becomes the shell instead of living inside a grid of identical
-cards. Start with `impeccable init` (PRODUCT.md) and new-work. Decisions
-already taken after the Phase 8 critiques:
+Done with the `impeccable` skill: `PRODUCT.md` from an interview, two
+concept-seed hands rejected, then a direction pinned by the owner ("simple,
+modern, cybernetic, with marked and moving flows") and approved from one mock.
+Contract in `.impeccable/surfaces/`, system documented in `DESIGN.md`.
 
-- [ ] Motion: only "Waiting for you" (and the connectors' flow) moves;
-      busy nodes no longer breathe
-- [ ] Colour families instead of one colour per activity: needs you
-      (amber), problem (red), busy (one hue, the label carries the nuance),
-      at rest (green / grey); unify "Done" with "Finished"
-- [ ] Open critique items: failure tied to the node that failed, a summary
-      with jump links, compact rows for quiet sessions, keyboard shortcuts
+- [x] A "live circuit": dark reticle ground (light variant too), hairline
+      panels, monospace for anything measured, no web fonts
+- [x] Colour families with one job each: cyan busy, amber needs you (the only
+      pulse), red failures, green delivered, slate at rest
+- [x] Live sessions as full stages; quiet ones as compact "At rest" rows
+- [x] Flows: streaming dashes and packets of light to running subagents
+      (CSS offset-path), a green packet back when one finishes
+- [x] Attention summary chips that jump to sessions; keys w, f, j/k, Esc
+- [x] Failures on the node that failed ("1 failed"), a note naming agent and
+      tool that opens the timeline at that row (`failed_steps`,
+      `last_failure_tool`, `last_failure_agent` in the API)
+- [x] Project names as headings; detector clean against `DESIGN.md`
+- [x] Verified in a browser: dark/light, desktop/mobile, live hand-back,
+      shortcuts, failure jump
 
 ## Phase 10 — Demo and docs (`docs/flow-demo`)
 

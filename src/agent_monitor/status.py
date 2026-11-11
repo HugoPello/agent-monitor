@@ -216,6 +216,7 @@ class SubagentSummary(BaseModel):
     activity: Activity
     started_at: datetime
     last_event_at: datetime
+    failed_steps: int  # failed tool calls by this subagent (it lives within one turn)
 
 
 def _summarize_subagent(
@@ -239,6 +240,7 @@ def _summarize_subagent(
         activity=activity,
         started_at=own_events[0].received_at,
         last_event_at=last_seen,
+        failed_steps=sum(e.hook_event_name == "PostToolUseFailure" for e in own_events),
     )
 
 
@@ -277,6 +279,8 @@ def current_turn(events: Sequence[StoredEvent]) -> Sequence[StoredEvent]:
 class Failures:
     count: int = 0
     last_at: datetime | None = None
+    last_tool: str | None = None
+    last_agent_type: str | None = None  # None: the main agent (or an unnamed subagent)
 
 
 def compute_failures(events: Sequence[StoredEvent]) -> Failures:
@@ -286,7 +290,15 @@ def compute_failures(events: Sequence[StoredEvent]) -> Failures:
     starts something new, even if the agent carried on afterwards.
     """
     failed = [e for e in current_turn(events) if e.hook_event_name == "PostToolUseFailure"]
-    return Failures(len(failed), failed[-1].received_at if failed else None)
+    if not failed:
+        return Failures()
+    last = failed[-1]
+    return Failures(
+        count=len(failed),
+        last_at=last.received_at,
+        last_tool=last.tool_name,
+        last_agent_type=last.payload.get("agent_type") if last.agent_id else None,
+    )
 
 
 def waiting_reason(events: Sequence[StoredEvent], status: AgentStatus) -> str | None:
@@ -319,6 +331,8 @@ class AgentSummary(BaseModel):
     waiting_reason: str | None
     failed_steps: int
     last_failure_at: datetime | None
+    last_failure_tool: str | None
+    last_failure_agent: str | None  # agent_type of the subagent that failed, if any
 
 
 def build_summary(
@@ -345,4 +359,6 @@ def build_summary(
         waiting_reason=waiting_reason(events, result.status),
         failed_steps=failures.count,
         last_failure_at=failures.last_at,
+        last_failure_tool=failures.last_tool,
+        last_failure_agent=failures.last_agent_type,
     )
