@@ -14,6 +14,10 @@
 // updated in place (keyed by session_id / agent_id). Rebuilding them on
 // every event would restart their CSS animations.
 //
+// Connectors are an SVG drawn behind the nodes. The nodes are laid out by CSS
+// grid, so the line ends are measured (getBoundingClientRect) and redrawn
+// whenever a stage changes or resizes.
+//
 // What an agent is doing (its "activity") is decided by the server; this
 // file only maps activity names to labels.
 //
@@ -29,6 +33,7 @@ const CLOCK_INTERVAL_MS = 10_000;
 const RECONNECT_DELAY_MS = 5_000;
 const DETAIL_MAX_LENGTH = 160;
 const MAX_DONE_VISIBLE = 4; // older finished subagents collapse into "+N done"
+const SVG_NS = "http://www.w3.org/2000/svg";
 
 const ACTIVITY_LABELS = {
   idle: "Idle",
@@ -68,6 +73,23 @@ function el(tag, className, text) {
   if (className) node.className = className;
   if (text !== undefined && text !== null) node.textContent = String(text);
   return node;
+}
+
+/** Create an SVG element (SVG needs its namespace; still no HTML parsing). */
+function svgEl(tag, className) {
+  const node = document.createElementNS(SVG_NS, tag);
+  if (className) node.setAttribute("class", className);
+  return node;
+}
+
+/**
+ * A horizontal S-curve from point a to point b, as SVG path data. The
+ * control points sit halfway across, so the line leaves and arrives level.
+ * connectorPath(b, a) is the same curve walked the other way.
+ */
+function connectorPath(a, b) {
+  const midX = (a.x + b.x) / 2;
+  return `M ${a.x} ${a.y} C ${midX} ${a.y}, ${midX} ${b.y}, ${b.x} ${b.y}`;
 }
 
 /** Last folder of a path, for both "/a/b" and "C:\\a\\b". */
@@ -177,6 +199,8 @@ function createStage(sessionId) {
   head.append(project, meta, details);
 
   const flow = el("div", "flow");
+  const links = svgEl("svg", "links");
+  links.setAttribute("aria-hidden", "true"); // decorative: the nodes carry the text
   const main = el("div", "node node-main");
   const mainActivity = el("span", "node-activity");
   main.append(el("span", "visually-hidden", "Main agent: "), mainActivity);
@@ -185,21 +209,25 @@ function createStage(sessionId) {
   const doneChip = el("li", "done-chip");
   doneChip.hidden = true;
   subList.append(doneChip);
-  flow.append(main, subList);
+  flow.append(links, main, subList);
 
   item.append(head, flow);
-  return {
+  const stage = {
     item,
     project,
     time,
     details,
     flow,
+    links,
     main,
     mainActivity,
     subList,
     doneChip,
     subs: new Map(), // agent_id -> subagent node refs (see createSubNode)
   };
+  stageByFlow.set(flow, stage);
+  resizeObserver.observe(flow);
+  return stage;
 }
 
 function createSubNode(stage) {
@@ -208,15 +236,27 @@ function createSubNode(stage) {
   const activity = el("span", "node-activity");
   node.append(type, activity);
   stage.subList.insertBefore(node, stage.doneChip);
-  return { node, type, activity, status: null };
+
+  // One connector per subagent: a faint track, the moving "flow" dashes on
+  // top, and a reversed copy used for the hand-back pulse.
+  const group = svgEl("g", "link");
+  const track = svgEl("path", "link-track");
+  const flow = svgEl("path", "link-flow");
+  const back = svgEl("path", "link-back");
+  group.append(track, flow, back);
+  stage.links.append(group);
+
+  return { node, type, activity, group, track, flow, back, status: null };
 }
 
 function updateSubNode(entry, sub) {
   entry.type.textContent = sub.agent_type || shortId(sub.agent_id);
   // A finished subagent has handed its result back: say "Done", not "Ended".
   entry.activity.textContent = sub.status === "done" ? "Done" : activityLabel(sub.activity);
-  entry.node.dataset.activity = sub.activity;
-  entry.node.dataset.state = sub.status;
+  for (const target of [entry.node, entry.group]) {
+    target.dataset.activity = sub.activity;
+    target.dataset.state = sub.status;
+  }
   entry.status = sub.status;
 }
 
@@ -229,6 +269,7 @@ function collapseDone(stage, subagents) {
   const hidden = new Set(done.slice(0, extra).map((sub) => sub.agent_id));
   for (const [agentId, entry] of stage.subs) {
     entry.node.hidden = hidden.has(agentId);
+    entry.group.classList.toggle("is-collapsed", hidden.has(agentId));
   }
   stage.doneChip.hidden = hidden.size === 0;
   stage.doneChip.textContent = `+${hidden.size} done`;
@@ -257,7 +298,37 @@ function updateStage(stage, agent) {
   }
   collapseDone(stage, agent.subagents);
   stage.flow.classList.toggle("has-subagents", agent.subagents.length > 0);
+  drawLinks(stage);
 }
+
+/** Point the connectors at where the nodes are now. */
+function drawLinks(stage) {
+  const box = stage.flow.getBoundingClientRect();
+  if (box.width === 0) return; // not laid out yet; the ResizeObserver will call back
+  stage.links.setAttribute("viewBox", `0 0 ${box.width} ${box.height}`);
+
+  const main = stage.main.getBoundingClientRect();
+  const from = { x: main.right - box.left, y: main.top + main.height / 2 - box.top };
+  for (const entry of stage.subs.values()) {
+    if (entry.node.hidden) continue;
+    const node = entry.node.getBoundingClientRect();
+    const to = { x: node.left - box.left, y: node.top + node.height / 2 - box.top };
+    const path = connectorPath(from, to);
+    entry.track.setAttribute("d", path);
+    entry.flow.setAttribute("d", path);
+    entry.back.setAttribute("d", connectorPath(to, from));
+  }
+}
+
+// Redraw a stage's connectors when its size changes (window resize, the
+// timeline opening, text wrapping...).
+const stageByFlow = new WeakMap(); // .flow element -> stage
+const resizeObserver = new ResizeObserver((entries) => {
+  for (const { target } of entries) {
+    const stage = stageByFlow.get(target);
+    if (stage) drawLinks(stage);
+  }
+});
 
 function renderAgents() {
   const agents = [...state.agents.values()].sort(byStageOrder);
