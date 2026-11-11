@@ -336,9 +336,15 @@ body {
   transition: opacity 0.6s;
 }
 
-.node.is-faded,
+/* Finished work recedes through its frame and connector, never its text:
+   "Done" and the agent type keep their 4.5:1 contrast. */
 .link.is-faded {
-  opacity: 0.55;
+  opacity: 0.5;
+}
+
+.node.is-faded {
+  border-color: var(--border);
+  background: transparent;
 }
 
 /* ---- Motion ------------------------------------------------------------ */
@@ -485,7 +491,7 @@ body {
   border-radius: 8px;
   background: var(--surface);
   box-shadow: var(--shadow);
-  transition: border-color 0.3s, opacity 0.6s;
+  transition: border-color 0.6s, background-color 0.6s;
 }
 
 .node-main {
