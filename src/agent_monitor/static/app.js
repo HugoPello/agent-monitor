@@ -20,12 +20,14 @@
 // grid, so the line ends are measured (getBoundingClientRect) and redrawn
 // whenever a stage changes or resizes.
 //
-// Animation: only changes seen live (from the stream) animate. A page load,
-// the 30 s refresh or a reconnect paints the current state directly, so
-// nothing "replays". A subagent starting draws its connector; while it runs
-// dashes flow towards it; when it stops a pulse travels back to the main
-// agent and the node fades. That only says who delegated to whom and when it
-// finished: hooks don't tell us what a subagent returned.
+// Animation: while a subagent runs, dashes stream along its flow and light
+// "packets" travel from the main agent to it (CSS offset-path along the
+// same curve). One-off moments only play for changes seen live (from the
+// stream): a page load, the 30 s refresh or a reconnect paints the current
+// state directly, so nothing "replays". A subagent starting draws its flow;
+// when it stops a packet travels back to the main agent and the node fades.
+// That only says who delegated to whom and when it finished: hooks don't
+// tell us what a subagent returned.
 //
 // What an agent is doing (its "activity") is decided by the server; this
 // file only maps activity names to labels.
@@ -45,6 +47,9 @@ const MAX_DONE_VISIBLE = 4; // older finished subagents collapse into "+N done"
 const SVG_NS = "http://www.w3.org/2000/svg";
 const FADE_AFTER_MS = 6_000; // a finished subagent dims this long after it is seen finishing
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+// Packets ride the flow with offset-path; without it they are simply left out.
+const PACKETS = CSS.supports("offset-path", "path('M 0 0 L 1 1')");
+const PACKETS_PER_FLOW = 2;
 
 const ACTIVITY_LABELS = {
   idle: "Idle",
@@ -338,13 +343,26 @@ function createSubNode(stage, animate) {
   node.append(type, activity);
   stage.subList.insertBefore(node, stage.doneChip);
 
-  // One connector per subagent: a faint track, the moving "flow" dashes on
-  // top, and a reversed copy used for the hand-back pulse.
+  // One flow per subagent: a faint track, the streaming dashes on top,
+  // packets travelling to the subagent, and one packet for the way back.
   const group = svgEl("g", "link");
   const track = svgEl("path", "link-track");
   const flow = svgEl("path", "link-flow");
-  const back = svgEl("path", "link-back");
-  group.append(track, flow, back);
+  group.append(track, flow);
+  const packets = [];
+  let backPacket = null;
+  if (PACKETS) {
+    for (let i = 0; i < PACKETS_PER_FLOW; i++) {
+      const packet = svgEl("circle", "packet");
+      packet.setAttribute("r", "3.5");
+      // Spread the packets evenly along the flow.
+      packet.style.animationDelay = `${(-i * 1.8) / PACKETS_PER_FLOW}s`;
+      packets.push(packet);
+    }
+    backPacket = svgEl("circle", "packet-back");
+    backPacket.setAttribute("r", "4");
+    group.append(...packets, backPacket);
+  }
   stage.links.append(group);
 
   return {
@@ -354,7 +372,8 @@ function createSubNode(stage, animate) {
     group,
     track,
     flow,
-    back,
+    packets,
+    backPacket,
     status: null,
     drawIn: animate && !reducedMotion.matches, // draw the connector once it has a path
     fadeTimer: null,
@@ -375,10 +394,12 @@ function playOnce(element, className, then) {
   element.classList.add(className);
 }
 
-/** Result delivered: a pulse runs back along the connector to the main agent. */
+/** Result delivered: a packet travels back along the flow to the main agent. */
 function handBack(stage, entry) {
   if (reducedMotion.matches) return; // the colour change says it already
-  playOnce(entry.back, "is-pulsing", () => playOnce(stage.main, "is-receiving"));
+  const arrive = () => playOnce(stage.main, "is-receiving");
+  if (entry.backPacket) playOnce(entry.backPacket, "is-travelling", arrive);
+  else arrive();
 }
 
 function fadeLater(entry, delay) {
@@ -499,7 +520,11 @@ function drawLinks(stage) {
     const path = connectorPath(from, to);
     entry.track.setAttribute("d", path);
     entry.flow.setAttribute("d", path);
-    entry.back.setAttribute("d", connectorPath(to, from));
+    // Packets follow the same curve (CSS offset-path takes the path data).
+    for (const packet of entry.packets) packet.style.offsetPath = `path("${path}")`;
+    if (entry.backPacket) {
+      entry.backPacket.style.offsetPath = `path("${connectorPath(to, from)}")`;
+    }
     entry.group.style.setProperty("--len", `${entry.track.getTotalLength()}px`);
     if (entry.drawIn) {
       entry.drawIn = false; // only now: the draw-in animation needs the path length

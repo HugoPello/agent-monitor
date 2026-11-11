@@ -436,8 +436,7 @@ button {
 }
 
 .link-track,
-.link-flow,
-.link-back {
+.link-flow {
   fill: none;
   stroke-linecap: round;
 }
@@ -452,10 +451,6 @@ button {
   stroke: var(--act);
   stroke-width: 1.6;
   stroke-dasharray: 2 14;
-}
-
-.link-back {
-  opacity: 0;
 }
 
 .link[data-state="done"] .link-flow,
@@ -738,12 +733,94 @@ body:has(.timeline:modal) {
   }
 }
 
-/* Reduced motion: nothing moves; colours and labels still change. */
+/* While a subagent runs, dashes stream towards it... */
+.link-flow {
+  animation: stream 0.9s linear infinite;
+  transition: opacity 0.3s;
+}
+
+@keyframes stream {
+  to { stroke-dashoffset: -16; }
+}
+
+/* ...and packets of light travel along the same curve. */
+.packet,
+.packet-back {
+  offset-rotate: 0deg;
+  offset-distance: 0%;
+}
+
+.packet {
+  fill: var(--act);
+  filter: drop-shadow(0 0 4px var(--act));
+  animation: travel 1.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+.link[data-state="done"] .packet,
+.link[data-activity="stale"] .packet,
+.link.is-new .packet {
+  display: none;
+}
+
+@keyframes travel {
+  0% { offset-distance: 0%; opacity: 0; }
+  12% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { offset-distance: 100%; opacity: 0; }
+}
+
+/* Result delivered: one green packet travels back to the main agent... */
+.packet-back {
+  fill: var(--done);
+  filter: drop-shadow(0 0 5px var(--done));
+  opacity: 0;
+}
+
+.packet-back.is-travelling {
+  animation: travel 0.9s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ...which acknowledges it. */
+.node-main.is-receiving {
+  animation: receive 0.7s ease-out;
+}
+
+@keyframes receive {
+  from {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--done) 60%, transparent);
+  }
+  to {
+    box-shadow: 0 0 0 12px color-mix(in srgb, var(--done) 0%, transparent);
+  }
+}
+
+/* Task handed over: a new flow draws itself from the main agent. */
+.link.is-new .link-track {
+  stroke-dasharray: var(--len);
+  animation: draw 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.link.is-new .link-flow {
+  opacity: 0;
+}
+
+@keyframes draw {
+  from { stroke-dashoffset: var(--len); }
+  to { stroke-dashoffset: 0; }
+}
+
+/* Reduced motion: nothing moves; colours and labels still change, and a
+   running flow stays visibly dashed. */
 @media (prefers-reduced-motion: reduce) {
   .node,
   .link-track,
   .link-flow,
-  .link-back {
+  .packet-back {
     animation: none !important;
+  }
+
+  .packet,
+  .packet-back {
+    display: none;
   }
 }
