@@ -88,6 +88,7 @@ const dom = {
   agentList: document.getElementById("agent-list"),
   timeline: document.getElementById("timeline"),
   timelineTitle: document.getElementById("timeline-title"),
+  timelineSubject: document.getElementById("timeline-subject"),
   eventList: document.getElementById("event-list"),
   closeTimeline: document.getElementById("close-timeline"),
   announcer: document.getElementById("announcer"),
@@ -189,6 +190,32 @@ function eventDetail(event) {
     default:
       return "";
   }
+}
+
+// What each hook event means, in words. Unknown events show their raw name.
+const EVENT_LABELS = {
+  SessionStart: "Session started",
+  UserPromptSubmit: "You asked",
+  PreToolUse: "Tool started",
+  PostToolUse: "Tool finished",
+  PostToolUseFailure: "Tool failed",
+  Stop: "Finished its turn",
+  SubagentStart: "Subagent started",
+  SubagentStop: "Subagent finished",
+  SessionEnd: "Session ended",
+};
+
+const NOTIFICATION_LABELS = {
+  permission_prompt: "Needs your permission",
+  idle_prompt: "Waiting for your input",
+};
+
+/** A plain-language label for an event. */
+function eventLabel(event) {
+  if (event.hook_event_name === "Notification") {
+    return NOTIFICATION_LABELS[event.payload?.notification_type] || "Notification";
+  }
+  return EVENT_LABELS[event.hook_event_name] || event.hook_event_name;
 }
 
 /** Visual category of an event, used for the timeline's left border. */
@@ -465,11 +492,13 @@ function renderEvent(event) {
   if (fromSubagent) item.classList.add("from-subagent");
 
   const title = el("div", "event-title");
-  title.append(el("span", null, event.hook_event_name));
+  title.append(el("span", null, eventLabel(event)));
   if (event.tool_name) title.append(el("span", "tool", event.tool_name));
   if (fromSubagent) {
     title.append(el("span", "agent-tag", event.payload?.agent_type || shortId(event.agent_id)));
   }
+  // The raw hook name stays, small, for debugging.
+  title.append(el("span", "hook-name", event.hook_event_name));
 
   item.append(el("time", "event-time", clockTime(event.received_at)), title);
   const detail = eventDetail(event);
@@ -479,9 +508,11 @@ function renderEvent(event) {
 
 function renderTimeline() {
   const agent = state.agents.get(state.selected);
-  dom.timelineTitle.textContent = agent
-    ? `Timeline · ${projectName(agent.cwd)} · ${shortId(agent.session_id)}`
-    : "Timeline";
+  // The heading stays "Timeline"; the subject sits below it in normal case,
+  // so the session id reads exactly as it does on the stage.
+  dom.timelineSubject.textContent = agent
+    ? `${projectName(agent.cwd)} · ${shortId(agent.session_id)}`
+    : "";
   // Newest first, so live events appear at the top.
   dom.eventList.replaceChildren(...state.events.toReversed().map(renderEvent));
 }

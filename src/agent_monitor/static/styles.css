@@ -614,8 +614,27 @@ body {
 
 .timeline-header {
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.timeline-header > div {
+  min-width: 0; /* lets a long project name shrink to an ellipsis */
+}
+
+.timeline-header .section-title {
+  margin-bottom: 2px;
+}
+
+.timeline-subject {
+  margin: 0;
+  overflow: hidden;
+  font-weight: 600;
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .icon-button {
@@ -688,6 +707,14 @@ body {
 .event-title .tool {
   color: var(--tool-fg);
   font-family: var(--mono);
+}
+
+.hook-name {
+  margin-left: auto;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 400;
 }
 
 .agent-tag {
