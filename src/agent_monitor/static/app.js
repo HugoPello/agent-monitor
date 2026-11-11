@@ -81,6 +81,16 @@ const URGENCY = {
   ended: 5,
 };
 const BASE_TITLE = document.title;
+// Top bar summary: what each chip counts, and its keyboard shortcut.
+const SUMMARY = [
+  { kind: "waiting", label: "waiting", key: "w", matches: (a) => a.activity === "waiting_input" },
+  { kind: "failed", label: "failed", key: "f", matches: (a) => a.failed_steps > 0 },
+  { kind: "stale", label: "stale", key: null, matches: (a) => a.activity === "stale" },
+  { kind: "working", label: "working", key: null, matches: (a) => URGENCY[a.activity] === 2 },
+  { kind: "finished", label: "finished", key: null, matches: (a) => a.activity === "finished" },
+];
+const TARGET_HIGHLIGHT_MS = 1_500;
+
 // Activities of a session with nothing left to watch.
 const AT_REST = new Set(["finished", "idle", "ended"]);
 // Matches the CSS breakpoint: above it the timeline is a side drawer that
@@ -93,6 +103,7 @@ const state = {
   selected: null, // session_id whose timeline is open
   events: [], // timeline of the selected session, oldest first
   reopening: false, // the dialog is being reopened in another form
+  jumps: {}, // summary kind -> index of the last session jumped to
 };
 
 const dom = {
@@ -278,6 +289,7 @@ function announce(message) {
 
 function createStage(sessionId) {
   const item = el("li", "stage");
+  item.dataset.sessionId = sessionId;
 
   const head = el("header", "stage-head");
   const project = el("h3", "project"); // a heading, so sessions are reachable by heading
@@ -584,11 +596,96 @@ function renderAgents(animate = false) {
   dom.liveEmpty.hidden = live.length > 0 || agents.length === 0;
   dom.restSection.hidden = resting.length === 0;
   document.title = pageTitle(agents);
+  renderSummary(agents);
 
   // Flows last: they measure the nodes, so the page must be final.
   for (const agent of agents) {
     if (!isAtRest(agent)) drawLinks(state.stages.get(agent.session_id));
   }
+}
+
+// ---- Summary and keyboard navigation ---------------------------------------
+
+/** Create the summary chips once; renderSummary only updates them. */
+function createSummary() {
+  const chips = new Map();
+  for (const { kind, key } of SUMMARY) {
+    const chip = el("button", "chip");
+    chip.type = "button";
+    chip.dataset.kind = kind;
+    if (key) chip.setAttribute("aria-keyshortcuts", key);
+    chip.hidden = true;
+    chips.set(kind, chip);
+  }
+  dom.summary.append(...chips.values());
+  return chips;
+}
+
+const summaryChips = createSummary();
+
+function renderSummary(agents) {
+  for (const { kind, label, matches } of SUMMARY) {
+    const count = agents.filter(matches).length;
+    const chip = summaryChips.get(kind);
+    chip.hidden = count === 0;
+    chip.textContent = `${count} ${label}`;
+    chip.setAttribute("aria-label", `${count} ${label}: go to the next one`);
+  }
+}
+
+/** Sessions in the order they appear on the page (live, then at rest). */
+function sessionsInPageOrder() {
+  return [...document.querySelectorAll("#agent-list > li, #rest-list > li")]
+    .map((item) => state.agents.get(item.dataset.sessionId))
+    .filter(Boolean);
+}
+
+/** Bring a session into view and put keyboard focus on it. */
+function focusSession(sessionId) {
+  const stage = state.stages.get(sessionId);
+  if (!stage) return;
+  const behavior = reducedMotion.matches ? "auto" : "smooth";
+  stage.item.scrollIntoView({ block: "center", behavior });
+  stage.details.focus({ preventScroll: true });
+  stage.item.classList.add("is-target");
+  setTimeout(() => stage.item.classList.remove("is-target"), TARGET_HIGHLIGHT_MS);
+}
+
+/** Go to the next session a summary chip counts, cycling through them. */
+function jumpTo(kind) {
+  const { matches } = SUMMARY.find((entry) => entry.kind === kind);
+  const targets = sessionsInPageOrder().filter(matches);
+  if (!targets.length) return;
+  const next = ((state.jumps[kind] ?? -1) + 1) % targets.length;
+  state.jumps[kind] = next;
+  focusSession(targets[next].session_id);
+}
+
+/** Move focus to the next (+1) or previous (-1) session on the page. */
+function moveFocus(step) {
+  const sessions = sessionsInPageOrder();
+  if (!sessions.length) return;
+  const current = document.activeElement?.closest?.("[data-session-id]")?.dataset.sessionId;
+  const index = sessions.findIndex((agent) => agent.session_id === current);
+  const next = index === -1 ? 0 : (index + step + sessions.length) % sessions.length;
+  focusSession(sessions[next].session_id);
+}
+
+const SHORTCUTS = {
+  w: () => jumpTo("waiting"),
+  f: () => jumpTo("failed"),
+  j: () => moveFocus(1),
+  k: () => moveFocus(-1),
+};
+
+function onShortcut(e) {
+  if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
+  if (e.target.closest?.("input, textarea, select, [contenteditable]")) return;
+  if (dom.timeline.matches(":modal")) return; // the sheet owns the keyboard
+  const action = SHORTCUTS[e.key];
+  if (!action) return;
+  e.preventDefault();
+  action();
 }
 
 // ---- Timeline (behind each stage's "Details" button) ----------------------
@@ -743,6 +840,13 @@ document.querySelector(".layout").addEventListener("click", (e) => {
 });
 
 dom.closeTimeline.addEventListener("click", closeTimeline);
+
+dom.summary.addEventListener("click", (e) => {
+  const chip = e.target.closest(".chip");
+  if (chip) jumpTo(chip.dataset.kind);
+});
+
+document.addEventListener("keydown", onShortcut);
 
 // A modal dialog closes on Esc by itself; the drawer (non-modal) does not.
 document.addEventListener("keydown", (e) => {

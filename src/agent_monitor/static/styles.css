@@ -132,6 +132,42 @@ button {
   margin-left: auto;
 }
 
+.chip {
+  --act: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  padding: 4px 11px;
+  border: 1px solid color-mix(in srgb, var(--act) 40%, var(--line));
+  border-radius: 999px;
+  background: transparent;
+  color: var(--act);
+  font: 500 12px var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.chip::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.chip:hover {
+  border-color: var(--act);
+}
+
+.chip[data-kind="waiting"] { --act: var(--wait); }
+.chip[data-kind="failed"],
+.chip[data-kind="stale"] { --act: var(--fail); }
+.chip[data-kind="working"] { --act: var(--busy); }
+.chip[data-kind="finished"] { --act: var(--done); }
+
 .connection {
   display: inline-flex;
   align-items: center;
@@ -198,6 +234,25 @@ button {
   color: var(--muted);
 }
 
+.keys {
+  margin: 0;
+  color: var(--muted);
+  font: 12px var(--mono);
+}
+
+.keys kbd {
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font: inherit;
+}
+
+@media (pointer: coarse) {
+  .keys {
+    display: none; /* no keyboard to speak of */
+  }
+}
+
 .empty {
   padding: 28px;
   border: 1px dashed var(--line);
@@ -250,6 +305,13 @@ button {
   border-color: color-mix(in srgb, var(--wait) 60%, transparent);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--wait) 15%, transparent),
     0 10px 34px -14px color-mix(in srgb, var(--wait) 45%, transparent);
+}
+
+/* Reached from a summary chip or a shortcut: briefly outlined. */
+.stage.is-target,
+.rest-row.is-target {
+  outline: 2px solid var(--busy);
+  outline-offset: 2px;
 }
 
 .stage.is-selected {
@@ -339,6 +401,26 @@ button {
   /* The gap between the columns is where the flows run. */
   grid-template-columns: minmax(0, 11rem) minmax(0, 15rem);
   column-gap: clamp(48px, 18vw, 300px);
+}
+
+@media (max-width: 700px) {
+  .topbar {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: var(--topbar-height);
+    padding: 10px 16px;
+    row-gap: 8px;
+  }
+
+  .summary {
+    order: 3;
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .connection {
+    margin-left: auto;
+  }
 }
 
 @media (max-width: 520px) {
