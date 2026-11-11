@@ -96,7 +96,9 @@ class TestListAgents:
                 "agent_id": "a1",
                 "agent_type": "Explore",
                 "status": "done",
+                "activity": "ended",
                 "started_at": agent["subagents"][0]["started_at"],
+                "last_event_at": agent["subagents"][0]["last_event_at"],
             }
         ]
 

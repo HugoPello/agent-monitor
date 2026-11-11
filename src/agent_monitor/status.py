@@ -9,7 +9,7 @@ Key rule: the *session* status only looks at main-agent events
 drive the session status would make it flicker.
 """
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
@@ -131,6 +131,43 @@ def status_from_event(event: StoredEvent) -> AgentStatus | None:
     return _EVENT_STATUS.get(event.hook_event_name)
 
 
+def subagent_status_from_event(event: StoredEvent) -> AgentStatus | None:
+    """Like ``status_from_event``, plus the events that bracket a subagent.
+
+    Kept separate on purpose: ``SubagentStop`` must never end the *session*.
+    """
+    if event.hook_event_name == "SubagentStart":
+        return AgentStatus.WORKING
+    if event.hook_event_name == "SubagentStop":
+        return AgentStatus.ENDED
+    return status_from_event(event)
+
+
+def _latest_status(
+    events: Sequence[StoredEvent],
+    interpret: Callable[[StoredEvent], AgentStatus | None],
+    last_seen: datetime,
+    now: datetime,
+    stale_after: timedelta,
+) -> StatusResult:
+    """Status from the newest event ``interpret`` understands.
+
+    ``last_seen`` is when the agent last showed any sign of life; an active
+    agent silent for longer than ``stale_after`` is reported as stale.
+    """
+    for event in reversed(events):
+        status = interpret(event)
+        if status is None:
+            continue  # an event we don't interpret: look further back
+
+        current_tool = event.tool_name if status is AgentStatus.RUNNING_TOOL else None
+        if status in _ACTIVE and now - last_seen > stale_after:
+            return StatusResult(AgentStatus.STALE, current_tool)
+        return StatusResult(status, current_tool)
+
+    return StatusResult(AgentStatus.UNKNOWN)
+
+
 def compute_status(
     events: Sequence[StoredEvent], now: datetime, stale_after: timedelta
 ) -> StatusResult:
@@ -138,51 +175,61 @@ def compute_status(
     if not events:
         return StatusResult(AgentStatus.UNKNOWN)
 
-    for event in reversed(events):
-        if event.agent_id is not None:
-            continue  # subagent event, see module docstring
-        status = status_from_event(event)
-        if status is None:
-            continue  # an event we don't interpret: look further back
-
-        current_tool = event.tool_name if status is AgentStatus.RUNNING_TOOL else None
-        # Any activity (subagents included) proves the session is alive.
-        silent_for = now - events[-1].received_at
-        if status in _ACTIVE and silent_for > stale_after:
-            return StatusResult(AgentStatus.STALE, current_tool)
-        return StatusResult(status, current_tool)
-
-    return StatusResult(AgentStatus.UNKNOWN)
+    main_events = [e for e in events if e.agent_id is None]  # see module docstring
+    # Any activity (subagents included) proves the session is alive.
+    last_seen = events[-1].received_at
+    return _latest_status(main_events, status_from_event, last_seen, now, stale_after)
 
 
 class SubagentSummary(BaseModel):
     agent_id: str
     agent_type: str | None
     status: SubagentStatus
+    activity: Activity
     started_at: datetime
+    last_event_at: datetime
 
 
-def compute_subagents(events: Sequence[StoredEvent]) -> list[SubagentSummary]:
+def _summarize_subagent(
+    agent_id: str, own_events: Sequence[StoredEvent], now: datetime, stale_after: timedelta
+) -> SubagentSummary:
+    """Summary of one subagent from its own events (non-empty, oldest first)."""
+    last_seen = own_events[-1].received_at
+    done = any(e.hook_event_name == "SubagentStop" for e in own_events)
+    if done:
+        activity = Activity.ENDED
+    else:
+        result = _latest_status(own_events, subagent_status_from_event, last_seen, now, stale_after)
+        activity = result.activity
+    agent_type = next(
+        (e.payload["agent_type"] for e in own_events if e.payload.get("agent_type")), None
+    )
+    return SubagentSummary(
+        agent_id=agent_id,
+        agent_type=agent_type,
+        status=SubagentStatus.DONE if done else SubagentStatus.RUNNING,
+        activity=activity,
+        started_at=own_events[0].received_at,
+        last_event_at=last_seen,
+    )
+
+
+def compute_subagents(
+    events: Sequence[StoredEvent], now: datetime, stale_after: timedelta
+) -> list[SubagentSummary]:
     """Subagents seen in a session, in the order they first appeared.
 
-    A subagent is ``running`` until its ``SubagentStop`` arrives.
+    A subagent is ``running`` until its ``SubagentStop`` arrives. Its activity
+    comes from its own latest event; a running subagent silent for longer
+    than ``stale_after`` is stale (e.g. its ``SubagentStop`` was never sent).
     """
-    subagents: dict[str, SubagentSummary] = {}
+    by_agent: dict[str, list[StoredEvent]] = {}
     for event in events:
-        if event.agent_id is None:
-            continue
-        summary = subagents.get(event.agent_id)
-        if summary is None:
-            summary = SubagentSummary(
-                agent_id=event.agent_id,
-                agent_type=event.payload.get("agent_type"),
-                status=SubagentStatus.RUNNING,
-                started_at=event.received_at,
-            )
-            subagents[event.agent_id] = summary
-        if event.hook_event_name == "SubagentStop":
-            summary.status = SubagentStatus.DONE
-    return list(subagents.values())
+        if event.agent_id is not None:
+            by_agent.setdefault(event.agent_id, []).append(event)
+    return [
+        _summarize_subagent(agent_id, own, now, stale_after) for agent_id, own in by_agent.items()
+    ]
 
 
 class AgentSummary(BaseModel):
@@ -216,5 +263,5 @@ def build_summary(
         started_at=events[0].received_at,
         last_event_at=events[-1].received_at,
         event_count=len(events),
-        subagents=compute_subagents(events),
+        subagents=compute_subagents(events, now, stale_after),
     )

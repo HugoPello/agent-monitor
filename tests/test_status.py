@@ -11,6 +11,7 @@ from agent_monitor.status import (
     Activity,
     AgentStatus,
     SubagentStatus,
+    SubagentSummary,
     activity_for,
     build_summary,
     compute_status,
@@ -207,25 +208,131 @@ class TestSessionActivity:
         assert self.activity_of(*events, now=T0 + STALE_AFTER) == Activity.RUNNING
 
 
+def subagents_of(*events: StoredEvent, now: datetime = T0) -> list[SubagentSummary]:
+    return compute_subagents(list(events), now, STALE_AFTER)
+
+
 class TestComputeSubagents:
     def test_tracks_subagents_in_order_of_appearance(self) -> None:
         events = [
             ev("PreToolUse", tool_name="Agent"),
             ev("SubagentStart", agent_id="a1", agent_type="Explore"),
             ev("SubagentStart", at=timedelta(seconds=5), agent_id="a2", agent_type="Plan"),
-            ev("SubagentStop", agent_id="a1", agent_type="Explore"),
+            ev("SubagentStop", at=timedelta(seconds=7), agent_id="a1", agent_type="Explore"),
         ]
 
-        subagents = compute_subagents(events)
+        subagents = subagents_of(*events, now=T0 + timedelta(seconds=8))
 
         assert [(s.agent_id, s.agent_type, s.status) for s in subagents] == [
             ("a1", "Explore", SubagentStatus.DONE),
             ("a2", "Plan", SubagentStatus.RUNNING),
         ]
         assert subagents[1].started_at == T0 + timedelta(seconds=5)
+        assert subagents[0].last_event_at == T0 + timedelta(seconds=7)
 
     def test_no_subagents(self) -> None:
-        assert compute_subagents([ev("Stop")]) == []
+        assert subagents_of(ev("Stop")) == []
+
+    def test_agent_type_from_first_event_that_has_it(self) -> None:
+        events = [
+            ev("PreToolUse", agent_id="a1", tool_name="Read"),
+            ev("PostToolUse", agent_id="a1", tool_name="Read", agent_type="Explore"),
+        ]
+
+        [subagent] = subagents_of(*events)
+
+        assert subagent.agent_type == "Explore"
+
+
+class TestSubagentActivity:
+    def activity_of(self, *events: StoredEvent, now: datetime = T0) -> Activity:
+        [subagent] = subagents_of(*events, now=now)
+        return subagent.activity
+
+    def test_just_started_is_thinking(self) -> None:
+        assert self.activity_of(ev("SubagentStart", agent_id="a1")) == Activity.THINKING
+
+    @pytest.mark.parametrize(
+        ("tool", "expected"),
+        [("Grep", Activity.RESEARCHING), ("Write", Activity.CODING), ("Bash", Activity.RUNNING)],
+    )
+    def test_running_tool_uses_the_table(self, tool: str, expected: Activity) -> None:
+        events = [
+            ev("SubagentStart", agent_id="a1"),
+            ev("PreToolUse", agent_id="a1", tool_name=tool),
+        ]
+
+        assert self.activity_of(*events) == expected
+
+    def test_thinking_after_a_tool(self) -> None:
+        events = [
+            ev("PreToolUse", agent_id="a1", tool_name="Grep"),
+            ev("PostToolUse", agent_id="a1", tool_name="Grep"),
+        ]
+
+        assert self.activity_of(*events) == Activity.THINKING
+
+    def test_done_subagent_has_ended(self) -> None:
+        events = [ev("SubagentStart", agent_id="a1"), ev("SubagentStop", agent_id="a1")]
+
+        assert self.activity_of(*events, now=T0 + timedelta(days=1)) == Activity.ENDED
+
+    def test_each_subagent_has_its_own_activity(self) -> None:
+        events = [
+            ev("PreToolUse", agent_id="a1", tool_name="Read"),
+            ev("PreToolUse", agent_id="a2", tool_name="Edit"),
+            ev("PreToolUse", tool_name="Agent"),
+        ]
+
+        assert [s.activity for s in subagents_of(*events)] == [
+            Activity.RESEARCHING,
+            Activity.CODING,
+        ]
+
+    def test_ignores_main_agent_events(self) -> None:
+        events = [ev("PreToolUse", agent_id="a1", tool_name="Read"), ev("Stop")]
+
+        assert self.activity_of(*events) == Activity.RESEARCHING
+
+    def test_subagent_stop_does_not_end_the_session(self) -> None:
+        events = [ev("PreToolUse", tool_name="Agent"), ev("SubagentStop", agent_id="a1")]
+
+        assert status_of(*events) == AgentStatus.RUNNING_TOOL
+
+
+class TestSubagentStale:
+    def activity_of(self, *events: StoredEvent, now: datetime) -> Activity:
+        [subagent] = subagents_of(*events, now=now)
+        return subagent.activity
+
+    def test_silent_running_subagent_becomes_stale(self) -> None:
+        # e.g. its SubagentStop was never sent
+        events = [ev("PreToolUse", agent_id="a1", tool_name="Bash")]
+        now = T0 + STALE_AFTER + timedelta(seconds=1)
+
+        assert self.activity_of(*events, now=now) == Activity.STALE
+
+    def test_exactly_at_threshold_is_not_stale(self) -> None:
+        events = [ev("PreToolUse", agent_id="a1", tool_name="Bash")]
+
+        assert self.activity_of(*events, now=T0 + STALE_AFTER) == Activity.RUNNING
+
+    def test_staleness_uses_the_subagents_own_events(self) -> None:
+        # The session is busy, but this subagent has been silent too long.
+        events = [
+            ev("PreToolUse", agent_id="a1", tool_name="Read"),
+            ev("PreToolUse", at=timedelta(minutes=15), tool_name="Bash"),
+        ]
+
+        assert self.activity_of(*events, now=T0 + timedelta(minutes=15)) == Activity.STALE
+
+    def test_stale_subagent_is_still_running(self) -> None:
+        events = [ev("SubagentStart", agent_id="a1")]
+
+        [subagent] = subagents_of(*events, now=T0 + timedelta(hours=1))
+
+        assert subagent.status == SubagentStatus.RUNNING
+        assert subagent.activity == Activity.STALE
 
 
 def test_build_summary() -> None:
