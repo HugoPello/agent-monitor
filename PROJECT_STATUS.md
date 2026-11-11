@@ -67,3 +67,27 @@ ruff is clean and the PR is merged.
 - [x] MIT license
 
 **MVP complete.**
+
+## Phase 7 — Activity model (`feat/activity-model`)
+
+- [x] `Activity` (idle, thinking, researching, coding, running, delegating,
+      working, waiting for you, stale, ended) derived by a pure function from
+      the status and the running tool
+- [x] One `TOOL_ACTIVITY` table with tool names from the Claude Code tools
+      reference; unknown and MCP tools fall back to "working"
+- [x] Per-subagent activity from its own latest event, plus `last_event_at`;
+      a running subagent silent past `stale_after` is stale
+- [x] `activity` exposed in `/agents` and in every SSE message
+      (`current_tool` kept for debugging)
+- [x] Tests with exact timestamps for every rule
+
+## Phase 8 — Flow dashboard (`feat/flow-dashboard`)
+
+- [ ] One stage per session: main agent node, subagent nodes, SVG connectors
+- [ ] Per-activity colour and pulse, delegation and hand-back animations
+- [ ] Timeline demoted (option to be chosen)
+
+## Phase 9 — Demo and docs (`docs/flow-demo`)
+
+- [ ] `scripts/demo.py` with parallel subagents
+- [ ] README: features, activities, GIF caption
