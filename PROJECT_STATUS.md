@@ -109,10 +109,20 @@ plus detector). First run 23/36; its five priority issues are fixed here:
 - [x] Dashboard files served with `Cache-Control: no-cache` (a cached
       index.html could meet a newer app.js)
 
-Second run: still 23/36 with different, deeper issues (three P1: the stage
-doesn't say why a session needs you or that a step failed; opening Details
-reflows the desktop grid; the mobile sheet is not a modal dialog). Left for
-the next step; see `.impeccable/critique/` (local, not committed).
+Second run (23/36) found three deeper P1s, fixed here too:
+
+- [x] Timeline as a `<dialog>`: modal sheet below 900px (focus contained,
+      inert page, 44px close on touch), non-modal side drawer above it that
+      pushes the page instead of reflowing the grid to one column
+- [x] The stage says why it needs you ("Claude needs your permission to use
+      Bash") and when a step failed in this turn (`waiting_reason`,
+      `failed_steps`, `last_failure_at` in the summary)
+- [x] Ended stages keep 4.5:1 text; new stages paint in their colours on load
+
+Third run: 24/40 (21/36 on the same heuristics). Scores are noisy across
+independent reviews; the remaining issues (failure tied to its node,
+attention hierarchy, empty cards, palette families) mostly belong to the
+shell redesign. Reports live in `.impeccable/critique/` (local, ignored).
 
 ## Phase 9 — Demo and docs (`docs/flow-demo`)
 
