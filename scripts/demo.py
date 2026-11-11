@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
-"""Replay two fictional Claude Code sessions against a running agent-monitor.
+"""Replay three fictional Claude Code sessions against a running agent-monitor.
 
 Lets anyone see the dashboard working without setting up Claude Code, and
-produces clean data for screenshots. The projects, prompts and paths are
-made up.
+produces clean data for screenshots and the README's GIF. The projects,
+prompts and paths are made up.
+
+What it shows, in about 40 seconds at normal speed:
+
+- weather-app delegates to three subagents that work in parallel. One of
+  them fails a test run, fixes the test and retries. Then the main agent
+  needs a permission before it can finish.
+- portfolio-site works through a small fix on its own and finishes first.
+- notes-cli has already ended, so the "At rest" list is not empty.
 
     python scripts/demo.py                 # real-time-ish pacing
     python scripts/demo.py --speed 3       # three times faster
@@ -24,100 +32,125 @@ DEFAULT_URL = "http://127.0.0.1:8765/events"
 
 WEATHER = {"name": "weather-app", "cwd": "/home/dev/projects/weather-app"}
 PORTFOLIO = {"name": "portfolio-site", "cwd": "/home/dev/projects/portfolio-site"}
+NOTES = {"name": "notes-cli", "cwd": "/home/dev/projects/notes-cli"}
+PROJECTS = (WEATHER, PORTFOLIO, NOTES)
+
+Step = tuple[float, dict, dict]  # (pause before, project, event fields)
 
 
-def build_scenario() -> list[tuple[float, dict, dict]]:
-    """Steps as (pause before, project, event fields), in order."""
-    w, p = WEATHER, PORTFOLIO
-    explore = {"agent_id": "agent-" + uuid.uuid4().hex[:12], "agent_type": "Explore"}
+# ---- Event builders. ``agent`` is a subagent; without it, the main agent. ----
 
-    def tool(name: str, **tool_input: str) -> dict:
-        return {"tool_name": name, "tool_input": tool_input, "tool_use_id": uuid.uuid4().hex}
+
+def subagent(agent_type: str) -> dict:
+    return {"agent_id": "agent-" + uuid.uuid4().hex[:12], "agent_type": agent_type}
+
+
+def pre(tool: str, agent: dict | None = None, **tool_input: str) -> dict:
+    return {
+        "hook_event_name": "PreToolUse",
+        **(agent or {}),
+        "tool_name": tool,
+        "tool_input": tool_input,
+        "tool_use_id": uuid.uuid4().hex,
+    }
+
+
+def post(tool: str, agent: dict | None = None) -> dict:
+    return {"hook_event_name": "PostToolUse", **(agent or {}), "tool_name": tool}
+
+
+def failure(tool: str, agent: dict | None = None, *, error: str, **tool_input: str) -> dict:
+    return {
+        "hook_event_name": "PostToolUseFailure",
+        **(agent or {}),
+        "tool_name": tool,
+        "tool_input": tool_input,
+        "error": error,
+    }
+
+
+def prompt(text: str) -> dict:
+    return {"hook_event_name": "UserPromptSubmit", "prompt": text}
+
+
+def stop(message: str, agent: dict | None = None) -> dict:
+    name = "SubagentStop" if agent else "Stop"
+    return {"hook_event_name": name, **(agent or {}), "last_assistant_message": message}
+
+
+def build_scenario() -> list[Step]:
+    """Steps in the order they are sent."""
+    w, p, n = WEATHER, PORTFOLIO, NOTES
+    helpers = subagent("Explore")
+    docs = subagent("Explore")
+    tests = subagent("general-purpose")
+    start = {"hook_event_name": "SessionStart", "source": "startup"}
+    pytest_forecast = "pytest tests/test_forecast.py -q"
 
     return [
-        (0.0, w, {"hook_event_name": "SessionStart", "source": "startup"}),
+        # notes-cli: an earlier session, already over.
+        (0.0, n, start),
+        (0.0, n, prompt("Add a --json flag to the list command")),
+        (0.0, n, stop("Added --json to `notes list`, with a test.")),
+        (0.0, n, {"hook_event_name": "SessionEnd", "reason": "prompt_input_exit"}),
+        # Two sessions start working.
+        (0.5, w, start),
+        (0.8, w, prompt("Add a 5-day forecast endpoint with tests")),
+        (0.6, p, start),
+        (0.6, p, prompt("Fix the contact form layout on mobile")),
+        (0.6, w, pre("Read", file_path="src/api/routes.py")),
+        (0.5, p, pre("Read", file_path="src/components/ContactForm.tsx")),
+        (1.0, w, post("Read")),
+        # weather-app delegates three jobs that run in parallel.
+        (0.6, w, pre("Agent", description="Find existing forecast helpers")),
+        (0.3, w, {"hook_event_name": "SubagentStart", **helpers}),
+        (0.6, w, pre("Agent", description="Check the provider's daily forecast API")),
+        (0.3, w, {"hook_event_name": "SubagentStart", **docs}),
+        (0.6, w, pre("Agent", description="Write tests for GET /forecast")),
+        (0.3, w, {"hook_event_name": "SubagentStart", **tests}),
+        (0.5, p, post("Read")),
+        (0.4, w, pre("Grep", helpers, pattern="forecast")),
+        (0.4, w, pre("WebFetch", docs, url="https://api.example.com/docs/forecast")),
+        (0.4, w, pre("Read", tests, file_path="tests/conftest.py")),
+        (0.6, p, pre("Edit", file_path="src/components/ContactForm.module.css")),
+        (1.0, w, post("Grep", helpers)),
+        (0.4, w, pre("Read", helpers, file_path="src/services/weather.py")),
+        (0.6, w, post("Read", tests)),
+        (0.4, w, pre("Write", tests, file_path="tests/test_forecast.py")),
+        (0.8, w, post("WebFetch", docs)),
+        (1.0, w, post("Read", helpers)),
+        (0.6, w, stop("get_forecast() already exists in services/weather.py", helpers)),
+        (0.6, p, post("Edit")),
+        (0.5, p, pre("Bash", command="npm test -- ContactForm")),
+        (1.0, w, post("Write", tests)),
+        (0.4, w, pre("Bash", tests, command=pytest_forecast)),
+        # The test writer's first run fails; it fixes the test and retries.
         (
-            1.0,
+            1.2,
             w,
-            {
-                "hook_event_name": "UserPromptSubmit",
-                "prompt": "Add a 5-day forecast endpoint with tests",
-            },
+            failure(
+                "Bash",
+                tests,
+                command=pytest_forecast,
+                error="1 failed: KeyError 'daily' in test_five_days",
+            ),
         ),
-        (1.0, w, {"hook_event_name": "PreToolUse", **tool("Read", file_path="src/api/routes.py")}),
-        (0.6, w, {"hook_event_name": "PostToolUse", "tool_name": "Read"}),
-        (
-            0.8,
-            w,
-            {
-                "hook_event_name": "PreToolUse",
-                **tool("Agent", description="Find existing forecast helpers"),
-            },
-        ),
-        (0.4, w, {"hook_event_name": "SubagentStart", **explore}),
-        (0.8, w, {"hook_event_name": "PreToolUse", **explore, **tool("Grep", pattern="forecast")}),
-        (0.5, p, {"hook_event_name": "SessionStart", "source": "startup"}),
-        (
-            0.8,
-            p,
-            {
-                "hook_event_name": "UserPromptSubmit",
-                "prompt": "Fix the contact form layout on mobile",
-            },
-        ),
-        (0.5, w, {"hook_event_name": "PostToolUse", **explore, "tool_name": "Grep"}),
-        (
-            0.6,
-            p,
-            {
-                "hook_event_name": "PreToolUse",
-                **tool("Read", file_path="src/components/ContactForm.tsx"),
-            },
-        ),
-        (
-            0.6,
-            w,
-            {
-                "hook_event_name": "PreToolUse",
-                **explore,
-                **tool("Read", file_path="src/services/weather.py"),
-            },
-        ),
-        (0.6, w, {"hook_event_name": "PostToolUse", **explore, "tool_name": "Read"}),
-        (
-            0.8,
-            w,
-            {
-                "hook_event_name": "SubagentStop",
-                **explore,
-                "last_assistant_message": "get_forecast() already exists in services/weather.py",
-            },
-        ),
-        (0.4, w, {"hook_event_name": "PostToolUse", "tool_name": "Agent"}),
-        (0.6, p, {"hook_event_name": "PostToolUse", "tool_name": "Read"}),
-        (
-            0.8,
-            w,
-            {"hook_event_name": "PreToolUse", **tool("Edit", file_path="src/api/routes.py")},
-        ),
-        (
-            0.6,
-            p,
-            {
-                "hook_event_name": "PreToolUse",
-                **tool("Edit", file_path="src/components/ContactForm.module.css"),
-            },
-        ),
-        (0.6, w, {"hook_event_name": "PostToolUse", "tool_name": "Edit"}),
-        (0.5, p, {"hook_event_name": "PostToolUse", "tool_name": "Edit"}),
-        (
-            0.8,
-            w,
-            {
-                "hook_event_name": "PreToolUse",
-                **tool("Bash", command="pytest tests/test_forecast.py -q"),
-            },
-        ),
+        (0.8, w, stop("The API returns `daily`, capped at 7 days.", docs)),
+        (0.6, w, pre("Edit", tests, file_path="tests/test_forecast.py")),
+        (0.8, w, post("Edit", tests)),
+        (0.4, w, pre("Bash", tests, command=pytest_forecast)),
+        (1.2, p, post("Bash")),
+        (0.6, p, stop("The form now stacks its fields below 480px. Tests pass.")),
+        (0.8, w, post("Bash", tests)),
+        (0.6, w, stop("4 tests for GET /forecast, all passing.", tests)),
+        # The three parallel Agent calls return together.
+        (0.4, w, post("Agent")),
+        (0.1, w, post("Agent")),
+        (0.1, w, post("Agent")),
+        # weather-app wires it up and needs a permission to run the suite.
+        (0.8, w, pre("Edit", file_path="src/api/routes.py")),
+        (1.0, w, post("Edit")),
+        (0.6, w, pre("Bash", command="pytest -q")),
         (
             0.5,
             w,
@@ -127,33 +160,12 @@ def build_scenario() -> list[tuple[float, dict, dict]]:
                 "message": "Claude needs your permission to use Bash",
             },
         ),
-        (
-            1.0,
-            p,
-            {"hook_event_name": "PreToolUse", **tool("Bash", command="npm test -- ContactForm")},
-        ),
-        (2.0, p, {"hook_event_name": "PostToolUse", "tool_name": "Bash"}),
-        (
-            0.8,
-            p,
-            {
-                "hook_event_name": "Stop",
-                "last_assistant_message": "The form now stacks its fields below 480px. Tests pass.",
-            },
-        ),
-        (1.5, w, {"hook_event_name": "PostToolUse", "tool_name": "Bash"}),
-        (
-            0.8,
-            w,
-            {
-                "hook_event_name": "Stop",
-                "last_assistant_message": "Added GET /forecast?days=5 with 4 tests, all passing.",
-            },
-        ),
+        (3.5, w, post("Bash")),
+        (0.8, w, stop("Added GET /forecast?days=5 with 4 tests, all passing.")),
     ]
 
 
-def post(url: str, event: dict) -> None:
+def send(url: str, event: dict) -> None:
     request = urllib.request.Request(
         url,
         data=json.dumps(event).encode(),
@@ -165,7 +177,7 @@ def post(url: str, event: dict) -> None:
 
 
 def run(url: str, speed: float) -> None:
-    session_ids = {WEATHER["name"]: str(uuid.uuid4()), PORTFOLIO["name"]: str(uuid.uuid4())}
+    session_ids = {project["name"]: str(uuid.uuid4()) for project in PROJECTS}
     for pause, project, fields in build_scenario():
         if speed > 0:
             time.sleep(pause / speed)
@@ -175,9 +187,9 @@ def run(url: str, speed: float) -> None:
             "transcript_path": f"~/.claude/projects/demo/{session_ids[project['name']]}.jsonl",
             **fields,
         }
-        post(url, event)
+        send(url, event)
         who = f"{project['name']}" + (f" [{fields['agent_type']}]" if "agent_id" in fields else "")
-        print(f"{who:<26} {fields['hook_event_name']:<18} {fields.get('tool_name', '')}")
+        print(f"{who:<32} {fields['hook_event_name']:<18} {fields.get('tool_name', '')}")
 
 
 def main(argv: list[str] | None = None) -> int:
