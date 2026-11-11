@@ -308,8 +308,21 @@ body {
   }
 }
 
-.stage.is-ended .flow {
-  opacity: 0.6;
+/* An ended session recedes through its frame, never its text (an opacity
+   fade took its labels to about 2.4:1). */
+.stage.is-ended {
+  background: transparent;
+  border-style: dashed;
+}
+
+.stage.is-ended .node {
+  border-color: var(--border);
+  background: transparent;
+  box-shadow: none;
+}
+
+.stage.is-ended .link {
+  opacity: 0.5;
 }
 
 /* Connectors: an SVG layer behind the nodes, sized by app.js to the flow. */
