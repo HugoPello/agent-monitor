@@ -16,9 +16,11 @@ it for:
 
 Environment variables (all optional):
 
-- ``AGENT_MONITOR_URL``           default ``http://127.0.0.1:8765/events``
-- ``AGENT_MONITOR_HOOK_TIMEOUT``  seconds, default ``2``
-- ``AGENT_MONITOR_HOOK_LOG``      file to append errors to (for debugging)
+- ``AGENT_MONITOR_URL``               default ``http://127.0.0.1:8765/events``
+- ``AGENT_MONITOR_HOOK_TIMEOUT``      seconds, default ``2``
+- ``AGENT_MONITOR_HOOK_LOG``          file to append errors to (for debugging)
+- ``AGENT_MONITOR_HOOK_ALLOW_IN_T3``  set to ``1``/``true`` to keep sending
+  ``X-T3Code-Thread-Id`` omitted (for nested standalone ``claude`` runs inside T3)
 """
 
 import os
@@ -39,11 +41,26 @@ def get_timeout():
     return value if value > 0 else DEFAULT_TIMEOUT_SECONDS
 
 
-def send(body, url, timeout):
+def hook_headers():
+    """Headers identifying the hook source and any enclosing T3 Code thread."""
+    headers = {"X-Agent-Monitor-Source": "claude-code"}
+    allow_in_t3 = os.environ.get("AGENT_MONITOR_HOOK_ALLOW_IN_T3", "").strip().lower()
+    if allow_in_t3 in ("1", "true", "yes"):
+        return headers
+    t3_thread_id = os.environ.get("T3CODE_THREAD_ID")
+    if t3_thread_id:
+        headers["X-T3Code-Thread-Id"] = t3_thread_id
+    return headers
+
+
+def send(body, url, timeout, extra_headers=None):
+    headers = {"Content-Type": "application/json"}
+    if extra_headers:
+        headers.update(extra_headers)
     request = urllib.request.Request(
         url,
         data=body,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     # An empty ProxyHandler disables proxies taken from the environment.
@@ -67,7 +84,12 @@ def main():
     try:
         body = sys.stdin.buffer.read()
         if body.strip():
-            send(body, os.environ.get("AGENT_MONITOR_URL", DEFAULT_URL), get_timeout())
+            send(
+                body,
+                os.environ.get("AGENT_MONITOR_URL", DEFAULT_URL),
+                get_timeout(),
+                extra_headers=hook_headers(),
+            )
     except Exception as exc:  # by design: nothing may escape
         log_error(f"{type(exc).__name__}: {exc}")
     return 0

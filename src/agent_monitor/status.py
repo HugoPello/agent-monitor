@@ -91,10 +91,14 @@ TOOL_ACTIVITY: dict[str, Activity] = {
     "Edit": Activity.CODING,
     "Write": Activity.CODING,
     "NotebookEdit": Activity.CODING,
+    "FileChange": Activity.CODING,
     "Bash": Activity.RUNNING,
     "PowerShell": Activity.RUNNING,
+    "Command": Activity.RUNNING,
     "Agent": Activity.DELEGATING,
     "Task": Activity.DELEGATING,  # the Agent tool's name before Claude Code 2.1.63
+    "delegate_task": Activity.DELEGATING,
+    "invoke_subagent": Activity.DELEGATING,
 }
 
 # Activity for every status that is not "running a tool".
@@ -204,9 +208,18 @@ def compute_status(
 
     main_events = [e for e in events if e.agent_id is None]  # see module docstring
     # Any activity (subagents included) proves the session is alive.
-    last_seen = events[-1].received_at
+    last_seen = max(e.received_at for e in events)
     result = _latest_status(main_events, status_from_event, last_seen, now, stale_after)
     return replace(result, turn_finished=turn_finished(main_events))
+
+
+def _latest_str(events: Sequence[StoredEvent], key: str) -> str | None:
+    """Return the newest non-empty string value for ``key`` in ``events``."""
+    for event in reversed(events):
+        value = event.payload.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
 
 
 class SubagentSummary(BaseModel):
@@ -217,13 +230,15 @@ class SubagentSummary(BaseModel):
     started_at: datetime
     last_event_at: datetime
     failed_steps: int  # failed tool calls by this subagent (it lives within one turn)
+    provider: str | None = None
+    model: str | None = None
 
 
 def _summarize_subagent(
     agent_id: str, own_events: Sequence[StoredEvent], now: datetime, stale_after: timedelta
 ) -> SubagentSummary:
     """Summary of one subagent from its own events (non-empty, oldest first)."""
-    last_seen = own_events[-1].received_at
+    last_seen = max(e.received_at for e in own_events)
     done = any(e.hook_event_name == "SubagentStop" for e in own_events)
     if done:
         activity = Activity.ENDED
@@ -238,9 +253,11 @@ def _summarize_subagent(
         agent_type=agent_type,
         status=SubagentStatus.DONE if done else SubagentStatus.RUNNING,
         activity=activity,
-        started_at=own_events[0].received_at,
+        started_at=min(e.received_at for e in own_events),
         last_event_at=last_seen,
         failed_steps=sum(e.hook_event_name == "PostToolUseFailure" for e in own_events),
+        provider=_latest_str(own_events, "provider"),
+        model=_latest_str(own_events, "model"),
     )
 
 
@@ -333,6 +350,9 @@ class AgentSummary(BaseModel):
     last_failure_at: datetime | None
     last_failure_tool: str | None
     last_failure_agent: str | None  # agent_type of the subagent that failed, if any
+    provider: str | None = None
+    model: str | None = None
+    title: str | None = None
 
 
 def build_summary(
@@ -342,6 +362,7 @@ def build_summary(
     stale_after: timedelta,
 ) -> AgentSummary:
     """Summarise a session. ``events`` must be non-empty, oldest first."""
+    main_events = [e for e in events if e.agent_id is None]
     result = compute_status(events, now, stale_after)
     # Most recent cwd wins: it can change during a session (CwdChanged).
     cwd = next((e.payload["cwd"] for e in reversed(events) if e.payload.get("cwd")), None)
@@ -353,7 +374,7 @@ def build_summary(
         current_tool=result.current_tool,
         cwd=cwd,
         started_at=events[0].received_at,
-        last_event_at=events[-1].received_at,
+        last_event_at=max(e.received_at for e in events),
         event_count=len(events),
         subagents=compute_subagents(events, now, stale_after),
         waiting_reason=waiting_reason(events, result.status),
@@ -361,4 +382,7 @@ def build_summary(
         last_failure_at=failures.last_at,
         last_failure_tool=failures.last_tool,
         last_failure_agent=failures.last_agent_type,
+        provider=_latest_str(main_events, "provider"),
+        model=_latest_str(main_events, "model"),
+        title=_latest_str(main_events, "title"),
     )

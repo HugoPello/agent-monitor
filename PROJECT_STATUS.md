@@ -158,3 +158,13 @@ Contract in `.impeccable/surfaces/`, system documented in `DESIGN.md`.
       animations showing only what hooks prove
 - [x] Demo pacing checked live in a browser
 - [x] `docs/demo.gif` re-recorded on the new design by the owner (1200 px, 2 MB)
+
+## Phase 11 — T3 Code multi-provider source (`feat/t3code-source`)
+
+- [x] `source_cursors` table and atomic `add_batch_with_cursor` in `EventStore`
+- [x] Read-only T3 Code `statev2.sqlite` reader & pure translator (`src/agent_monitor/t3code.py`) supporting Claude, Gemini/Antigravity, OpenCode, and delegated/native subagents
+- [x] Lifespan background polling and live SSE publishing in `api.py`
+- [x] Automatic deduplication of Claude Code hooks running inside T3 Code (`X-T3Code-Thread-Id`)
+- [x] `provider`, `model`, and `title` metadata on summaries and neutral badges in the dashboard
+- [x] Extended `TOOL_ACTIVITY` table (`Command`, `FileChange`, `delegate_task`, `invoke_subagent`)
+- [x] Unit and integration tests with synthetic T3 Code SQLite fixtures, plus manual read-only verification against local `statev2.sqlite`

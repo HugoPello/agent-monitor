@@ -337,10 +337,33 @@ button {
 
 .stage-meta {
   display: flex;
-  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
   color: var(--muted);
   font: 12px var(--mono);
   font-variant-numeric: tabular-nums;
+}
+
+.provider-tag {
+  max-width: 24ch;
+  padding: 0 6px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--muted);
+  font: 500 11px var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stage-title {
+  margin: 4px 0 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .details-button {
@@ -502,6 +525,14 @@ button {
   white-space: nowrap;
 }
 
+.node-model {
+  overflow: hidden;
+  color: var(--muted);
+  font: 400 11px var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .node[data-activity="stale"] {
   border-style: dashed;
 }
@@ -637,8 +668,9 @@ button {
   display: none;
 }
 
-/* In a rest row the stage's flow and notes are not shown. */
+/* In a rest row the stage's flow, title and notes are not shown. */
 .rest-row .flow,
+.rest-row .stage-title,
 .rest-row .stage-notes {
   display: none;
 }

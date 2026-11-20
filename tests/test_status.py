@@ -146,10 +146,14 @@ class TestActivityFor:
             ("Edit", Activity.CODING),
             ("Write", Activity.CODING),
             ("NotebookEdit", Activity.CODING),
+            ("FileChange", Activity.CODING),
             ("Bash", Activity.RUNNING),
             ("PowerShell", Activity.RUNNING),
+            ("Command", Activity.RUNNING),
             ("Agent", Activity.DELEGATING),
             ("Task", Activity.DELEGATING),
+            ("delegate_task", Activity.DELEGATING),
+            ("invoke_subagent", Activity.DELEGATING),
         ],
     )
     def test_running_tool_uses_the_table(self, tool: str, expected: Activity) -> None:
@@ -157,7 +161,7 @@ class TestActivityFor:
 
     def test_every_table_entry_is_tested(self) -> None:
         # Forces a new table entry to come with a test case above.
-        assert len(TOOL_ACTIVITY) == 13
+        assert len(TOOL_ACTIVITY) == 17
 
     @pytest.mark.parametrize(
         "tool", ["mcp__github__create_issue", "SomeFutureTool", "read", "", None]
@@ -512,3 +516,62 @@ def test_build_summary() -> None:
     assert summary.waiting_reason is None
     assert summary.failed_steps == 0
     assert summary.last_failure_at is None
+    assert summary.provider is None
+    assert summary.model is None
+    assert summary.title is None
+
+
+def test_provider_model_and_title_do_not_bleed_from_subagents() -> None:
+    events = [
+        ev(
+            "SessionStart",
+            provider="antigravity",
+            model="gemini-4-neon",
+            title="Main task",
+        ),
+        ev(
+            "SubagentStart",
+            at=timedelta(seconds=1),
+            agent_id="a1",
+            agent_type="review",
+            provider="claude",
+            model="claude-opus-5-5",
+            title="Subtask title",
+        ),
+        ev(
+            "PreToolUse",
+            at=timedelta(seconds=2),
+            agent_id="a1",
+            tool_name="Read",
+            provider="claude",
+            model="claude-opus-5-5",
+        ),
+    ]
+
+    summary = build_summary("s1", events, T0 + timedelta(seconds=3), STALE_AFTER)
+
+    assert summary.provider == "antigravity"
+    assert summary.model == "gemini-4-neon"
+    assert summary.title == "Main task"
+    [sub] = summary.subagents
+    assert sub.provider == "claude"
+    assert sub.model == "claude-opus-5-5"
+
+
+def test_build_summary_picks_newest_provider_model_and_title() -> None:
+    events = [
+        ev("SessionStart", provider="antigravity", model="gemini-3.8-flash", title="Old"),
+        ev(
+            "ThreadMetadataUpdated",
+            at=timedelta(seconds=1),
+            provider="antigravity",
+            model="gemini-pro-orchestrator-neon",
+            title="Renamed",
+        ),
+    ]
+
+    summary = build_summary("s1", events, T0 + timedelta(seconds=2), STALE_AFTER)
+
+    assert summary.provider == "antigravity"
+    assert summary.model == "gemini-pro-orchestrator-neon"
+    assert summary.title == "Renamed"

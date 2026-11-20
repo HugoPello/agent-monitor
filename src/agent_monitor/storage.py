@@ -10,13 +10,17 @@ option.
 """
 
 import json
+import logging
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from agent_monitor.models import HookEvent, StoredEvent
+
+logger = logging.getLogger(__name__)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -30,6 +34,12 @@ CREATE TABLE IF NOT EXISTS events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_session ON events (session_id, id);
+
+CREATE TABLE IF NOT EXISTS source_cursors (
+    source     TEXT    PRIMARY KEY,
+    cursor     INTEGER NOT NULL,
+    state_json TEXT    NOT NULL DEFAULT '{}'
+);
 """
 
 
@@ -57,38 +67,99 @@ class EventStore:
         finally:
             conn.close()
 
-    def add(self, event: HookEvent, received_at: datetime | None = None) -> StoredEvent:
-        """Persist ``event`` and return it with its id and timestamp."""
-        received_at = received_at or datetime.now(UTC)
+    def _insert_event(
+        self,
+        conn: sqlite3.Connection,
+        event: HookEvent,
+        received_at: datetime | None,
+    ) -> StoredEvent:
+        ts = received_at or datetime.now(UTC)
         payload = event.payload()
-        with self._connect() as conn:
-            cursor = conn.execute(
-                """
-                INSERT INTO events
-                    (received_at, session_id, agent_id, hook_event_name, tool_name, payload)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    received_at.isoformat(),
-                    event.session_id,
-                    event.agent_id,
-                    event.hook_event_name,
-                    event.tool_name,
-                    json.dumps(payload),
-                ),
-            )
-            event_id = cursor.lastrowid
-
+        cursor = conn.execute(
+            """
+            INSERT INTO events
+                (received_at, session_id, agent_id, hook_event_name, tool_name, payload)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                ts.isoformat(),
+                event.session_id,
+                event.agent_id,
+                event.hook_event_name,
+                event.tool_name,
+                json.dumps(payload),
+            ),
+        )
+        event_id = cursor.lastrowid
         assert event_id is not None  # always set after a successful INSERT
         return StoredEvent(
             id=event_id,
-            received_at=received_at,
+            received_at=ts,
             session_id=event.session_id,
             agent_id=event.agent_id,
             hook_event_name=event.hook_event_name,
             tool_name=event.tool_name,
             payload=payload,
         )
+
+    def _upsert_cursor(
+        self,
+        conn: sqlite3.Connection,
+        source: str,
+        cursor: int,
+        state: dict[str, Any] | None,
+    ) -> None:
+        conn.execute(
+            """
+            INSERT INTO source_cursors (source, cursor, state_json)
+            VALUES (?, ?, ?)
+            ON CONFLICT (source) DO UPDATE SET
+                cursor = excluded.cursor,
+                state_json = excluded.state_json
+            """,
+            (source, cursor, json.dumps(state or {})),
+        )
+
+    def add(self, event: HookEvent, received_at: datetime | None = None) -> StoredEvent:
+        """Persist ``event`` and return it with its id and timestamp."""
+        with self._connect() as conn:
+            return self._insert_event(conn, event, received_at)
+
+    def get_cursor(self, source: str) -> tuple[int, dict[str, Any]]:
+        """Return ``(cursor, state)`` for ``source``, or ``(0, {})`` if unseen."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT cursor, state_json FROM source_cursors WHERE source = ?",
+                (source,),
+            ).fetchone()
+        if row is None:
+            return 0, {}
+        try:
+            state = json.loads(row["state_json"])
+        except (json.JSONDecodeError, TypeError):
+            logger.warning("Corrupt cursor state for source %s; resetting cursor", source)
+            return 0, {}
+        if not isinstance(state, dict):
+            return 0, {}
+        return int(row["cursor"]), state
+
+    def set_cursor(self, source: str, cursor: int, state: dict[str, Any] | None = None) -> None:
+        """Persist ``cursor`` and optional serialised translator ``state``."""
+        with self._connect() as conn:
+            self._upsert_cursor(conn, source, cursor, state)
+
+    def add_batch_with_cursor(
+        self,
+        source: str,
+        items: Sequence[tuple[HookEvent, datetime | None]],
+        cursor: int,
+        state: dict[str, Any],
+    ) -> list[StoredEvent]:
+        """Atomically insert ``items`` and update ``source``'s cursor in one transaction."""
+        with self._connect() as conn:
+            stored = [self._insert_event(conn, event, ts) for event, ts in items]
+            self._upsert_cursor(conn, source, cursor, state)
+        return stored
 
     def events_for_session(self, session_id: str) -> list[StoredEvent]:
         """All events of a session, oldest first."""
