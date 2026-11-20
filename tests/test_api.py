@@ -1,6 +1,7 @@
 """Tests for the HTTP API."""
 
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -68,7 +69,14 @@ class TestPostEvents:
 
     def test_deduplicates_hook_inside_t3code_when_t3_source_active(self, tmp_path: Path) -> None:
         t3_db = tmp_path / "statev2.sqlite"
-        t3_db.write_bytes(b"")
+        with sqlite3.connect(t3_db) as conn:
+            conn.execute(
+                "CREATE TABLE orchestration_v2_projection_threads "
+                "(thread_id TEXT PRIMARY KEY, deleted_at TEXT)"
+            )
+            conn.execute(
+                "INSERT INTO orchestration_v2_projection_threads (thread_id) VALUES ('t-1')"
+            )
         settings = Settings(
             _env_file=None,
             db_path=tmp_path / "events.db",
@@ -87,6 +95,33 @@ class TestPostEvents:
         assert response.status_code == 204
         assert t3_client.get("/agents").json() == []
         assert queue.empty()
+
+    def test_keeps_hook_when_t3code_thread_not_in_t3_db(self, tmp_path: Path) -> None:
+        t3_db = tmp_path / "statev2.sqlite"
+        with sqlite3.connect(t3_db) as conn:
+            conn.execute(
+                "CREATE TABLE orchestration_v2_projection_threads "
+                "(thread_id TEXT PRIMARY KEY, deleted_at TEXT)"
+            )
+            conn.execute(
+                "INSERT INTO orchestration_v2_projection_threads (thread_id) VALUES ('other-t')"
+            )
+        settings = Settings(
+            _env_file=None,
+            db_path=tmp_path / "events.db",
+            t3_enabled=True,
+            t3_db_path=t3_db,
+        )
+        t3_client = TestClient(create_app(settings))
+
+        response = t3_client.post(
+            "/events",
+            json={"session_id": "s1", "hook_event_name": "Stop"},
+            headers={"X-Agent-Monitor-Source": "claude-code", "X-T3Code-Thread-Id": "missing-t"},
+        )
+
+        assert response.status_code == 201
+        assert len(t3_client.get("/agents").json()) == 1
 
     def test_keeps_hook_inside_t3code_when_t3_source_disabled(self, client: TestClient) -> None:
         response = client.post(

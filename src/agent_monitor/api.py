@@ -16,6 +16,7 @@ Sync vs async endpoints: ``sqlite3`` is blocking, and blocking calls inside
 """
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime, timedelta
@@ -39,6 +40,7 @@ from agent_monitor.storage import EventStore
 from agent_monitor.t3code import T3CodeReader
 
 STREAM_EVENT_NAME = "agent_event"
+logger = logging.getLogger(__name__)
 
 # The dashboard: plain HTML/CSS/JS shipped inside the package
 # (see [tool.setuptools.package-data] in pyproject.toml).
@@ -72,6 +74,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     store = EventStore(settings.db_path)
     broadcaster = Broadcaster()
     stale_after = timedelta(seconds=settings.stale_after_seconds)
+    reader = T3CodeReader(settings.t3_db_path) if settings.t3_enabled else None
 
     def summarize(session_id: str) -> AgentSummary:
         events = store.events_for_session(session_id)
@@ -89,26 +92,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        if not settings.t3_enabled:
+        if reader is None:
             yield
             return
 
-        reader = T3CodeReader(settings.t3_db_path)
-        await run_in_threadpool(reader.poll_once, store)
+        try:
+            await run_in_threadpool(reader.poll_once, store)
+        except Exception:
+            logger.exception("Initial T3 Code poll failed")
 
         async def poll_t3code() -> None:
             while True:
                 await asyncio.sleep(settings.t3_poll_interval_seconds)
-                stored_events = await run_in_threadpool(reader.poll_once, store)
-                if not stored_events:
-                    continue
-                summaries: dict[str, AgentSummary] = {}
-                for stored in stored_events:
-                    agent = summaries.get(stored.session_id)
-                    if agent is None:
-                        agent = await run_in_threadpool(summarize, stored.session_id)
-                        summaries[stored.session_id] = agent
-                    publish_stored(stored, agent)
+                try:
+                    stored_events = await run_in_threadpool(reader.poll_once, store)
+                    if not stored_events:
+                        continue
+                    summaries: dict[str, AgentSummary] = {}
+                    for stored in stored_events:
+                        agent = summaries.get(stored.session_id)
+                        if agent is None:
+                            agent = await run_in_threadpool(summarize, stored.session_id)
+                            summaries[stored.session_id] = agent
+                        publish_stored(stored, agent)
+                except Exception:
+                    logger.exception("T3 Code poll failed")
 
         task = asyncio.create_task(poll_t3code())
         try:
@@ -120,6 +128,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(title="agent-monitor", version=__version__, lifespan=lifespan)
     app.state.broadcaster = broadcaster  # exposed for tests
+    app.state.t3_reader = reader
     app.mount("/static", DashboardFiles(directory=STATIC_DIR), name="static")
 
     @app.get("/", include_in_schema=False)
@@ -140,7 +149,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         Invalid bodies get FastAPI's automatic 422.
         """
-        if settings.t3_enabled and x_t3code_thread_id and settings.t3_db_path.expanduser().exists():
+        if (
+            reader is not None
+            and x_t3code_thread_id
+            and await run_in_threadpool(reader.knows_thread, x_t3code_thread_id)
+        ):
             return Response(status_code=status.HTTP_204_NO_CONTENT)
         if x_agent_monitor_source == "claude-code" and not event.payload().get("provider"):
             event = HookEvent.model_validate({**event.payload(), "provider": "claude"})

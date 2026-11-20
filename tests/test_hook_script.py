@@ -92,6 +92,9 @@ def test_hook_headers_include_t3code_thread_id_when_set(
         "X-T3Code-Thread-Id": "thread-xyz",
     }
 
+    monkeypatch.setenv("AGENT_MONITOR_HOOK_ALLOW_IN_T3", "1")
+    assert hook_module.hook_headers() == {"X-Agent-Monitor-Source": "claude-code"}
+
 
 def test_ignores_proxy_environment_variables(running_server: RunningServer) -> None:
     # A proxy on a closed port: if the script used it, the event would be lost.
