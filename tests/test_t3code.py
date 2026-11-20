@@ -10,6 +10,7 @@ import urllib.request
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from agent_monitor.api import create_app
@@ -17,7 +18,7 @@ from agent_monitor.config import Settings
 from agent_monitor.server import build_server
 from agent_monitor.status import Activity, AgentStatus, SubagentStatus, build_summary
 from agent_monitor.storage import EventStore
-from agent_monitor.t3code import T3CodeReader
+from agent_monitor.t3code import T3CodeReader, _bounded_add
 
 T3_SCHEMA = """
 CREATE TABLE projection_projects (
@@ -851,3 +852,575 @@ def test_app_lifespan_polls_t3_db_and_publishes_sse(tmp_path: Path) -> None:
     finally:
         server.should_exit = True
         thread_srv.join(timeout=10)
+
+
+def test_transient_orchestration_events_error_does_not_reset_cursor(tmp_path: Path) -> None:
+    t3_path = tmp_path / "statev2.sqlite"
+    conn = create_t3_db(t3_path)
+    insert_project(conn, "p1", "/repos/err")
+    thread = insert_thread(
+        conn,
+        thread_id="t1",
+        project_id="p1",
+        title="Err test",
+        provider="antigravity",
+        model="gemini-4-neon",
+        created_at="2026-11-20T10:00:00Z",
+    )
+    append_event(
+        conn,
+        seq_hint=1,
+        aggregate_kind="thread",
+        stream_id="t1",
+        event_type="thread.created",
+        occurred_at="2026-11-20T10:00:00Z",
+        payload=thread,
+    )
+
+    store = EventStore(tmp_path / "monitor.db")
+    reader = T3CodeReader(t3_path)
+    assert len(reader.poll_once(store)) == 1
+    saved_cursor, _ = store.get_cursor("t3code")
+    assert saved_cursor == 1
+
+    # Temporarily rename orchestration_events to simulate transient read error / migration.
+    with conn:
+        conn.execute("ALTER TABLE orchestration_events RENAME TO orchestration_events_tmp")
+    assert reader.poll_once(store) == []
+    assert store.get_cursor("t3code")[0] == 1
+
+    with conn:
+        conn.execute("ALTER TABLE orchestration_events_tmp RENAME TO orchestration_events")
+    conn.close()
+
+    assert reader.poll_once(store) == []
+    assert len(store.events_for_session("t1")) == 1
+
+
+def test_recreated_db_with_higher_sequence_resets_via_fingerprint(tmp_path: Path) -> None:
+    t3_path = tmp_path / "statev2.sqlite"
+    conn = create_t3_db(t3_path)
+    insert_project(conn, "p1", "/repos/fp")
+    t_old = insert_thread(
+        conn,
+        thread_id="old-1",
+        project_id="p1",
+        title="Old",
+        provider="antigravity",
+        model="gemini-4-neon",
+        created_at="2026-11-20T10:00:00Z",
+    )
+    append_event(
+        conn,
+        seq_hint=1,
+        aggregate_kind="thread",
+        stream_id="old-1",
+        event_type="thread.created",
+        occurred_at="2026-11-20T10:00:00Z",
+        payload=t_old,
+    )
+    conn.close()
+
+    store = EventStore(tmp_path / "monitor.db")
+    reader = T3CodeReader(t3_path)
+    reader.poll_once(store)
+    assert store.get_cursor("t3code")[0] == 1
+
+    # Recreate DB with MORE events than the old cursor (max_seq=2 >= cursor=1), different event_id.
+    t3_path.unlink()
+    conn2 = create_t3_db(t3_path)
+    insert_project(conn2, "p2", "/repos/fp2")
+    t_new = insert_thread(
+        conn2,
+        thread_id="new-1",
+        project_id="p2",
+        title="New",
+        provider="claudeAgent",
+        model="claude-opus-5-5",
+        created_at="2026-11-20T11:00:00Z",
+    )
+    append_event(
+        conn2,
+        seq_hint=1,
+        aggregate_kind="thread",
+        stream_id="new-1",
+        event_type="thread.created",
+        occurred_at="2026-11-20T11:00:00Z",
+        payload=t_new,
+    )
+    append_event(
+        conn2,
+        seq_hint=2,
+        aggregate_kind="thread",
+        stream_id="new-1",
+        event_type="turn-item.updated",
+        occurred_at="2026-11-20T11:00:01Z",
+        payload={"id": "u-new", "threadId": "new-1", "type": "user_message", "text": "go"},
+    )
+    conn2.close()
+
+    stored = reader.poll_once(store)
+    assert [e.hook_event_name for e in stored] == ["SessionStart", "UserPromptSubmit"]
+    assert store.get_cursor("t3code")[0] == 2
+
+
+def test_provider_native_subagent_turn_items_attributed_before_stop(tmp_path: Path) -> None:
+    t3_path = tmp_path / "statev2.sqlite"
+    conn = create_t3_db(t3_path)
+    insert_project(conn, "p1", "/repos/native")
+    parent = insert_thread(
+        conn,
+        thread_id="t1",
+        project_id="p1",
+        title="Parent",
+        provider="claudeAgent",
+        model="claude-opus-5-5",
+        created_at="2026-11-20T10:00:00Z",
+    )
+    append_event(
+        conn,
+        seq_hint=1,
+        aggregate_kind="thread",
+        stream_id="t1",
+        event_type="thread.created",
+        occurred_at="2026-11-20T10:00:00Z",
+        payload=parent,
+    )
+    append_event(
+        conn,
+        seq_hint=2,
+        aggregate_kind="thread",
+        stream_id="t1",
+        event_type="turn-item.updated",
+        occurred_at="2026-11-20T10:00:01Z",
+        payload={"id": "u1", "threadId": "t1", "type": "user_message", "text": "search"},
+    )
+    append_event(
+        conn,
+        seq_hint=3,
+        aggregate_kind="thread",
+        stream_id="t1",
+        event_type="turn-item.updated",
+        occurred_at="2026-11-20T10:00:03Z",
+        payload={
+            "id": "sub-read",
+            "threadId": "t1",
+            "providerThreadId": "pt-native-1",
+            "type": "dynamic_tool",
+            "toolName": "Read",
+            "status": "completed",
+            "startedAt": "2026-11-20T10:00:02Z",
+            "input": {"file_path": "/repos/native/a.py"},
+        },
+    )
+    with conn:
+        conn.execute(
+            """
+            INSERT INTO orchestration_v2_projection_subagents
+                (subagent_id, thread_id, run_id, parent_node_id, provider,
+                 provider_instance_id, driver, provider_thread_id, child_thread_id,
+                 origin, status, started_at, completed_at, updated_at, payload_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "native-sub-1",
+                "t1",
+                "r1",
+                "n1",
+                "claudeAgent",
+                "claudeAgent",
+                "claudeAgent",
+                "pt-native-1",
+                None,
+                "provider_native",
+                "completed",
+                "2026-11-20T10:00:02Z",
+                "2026-11-20T10:00:04Z",
+                "2026-11-20T10:00:04Z",
+                json.dumps({"agentType": "Explore"}),
+            ),
+        )
+    conn.close()
+
+    store = EventStore(tmp_path / "monitor.db")
+    T3CodeReader(t3_path).poll_once(store)
+
+    events = store.events_for_session("t1")
+    assert [(e.hook_event_name, e.agent_id) for e in events] == [
+        ("SessionStart", None),
+        ("UserPromptSubmit", None),
+        ("SubagentStart", "native-sub-1"),
+        ("PreToolUse", "native-sub-1"),
+        ("PostToolUse", "native-sub-1"),
+        ("SubagentStop", "native-sub-1"),
+    ]
+    summary = build_summary(
+        "t1",
+        events,
+        datetime(2026, 11, 20, 10, 0, 5, tzinfo=UTC),
+        timedelta(minutes=10),
+    )
+    assert summary.status == AgentStatus.WORKING
+    assert summary.subagents[0].status == SubagentStatus.DONE
+
+
+def test_lifespan_survives_startup_and_poll_exceptions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = 0
+    real_poll = T3CodeReader.poll_once
+
+    def flaky_poll(self: T3CodeReader, store: EventStore) -> list:
+        nonlocal calls
+        calls += 1
+        if calls <= 2:
+            raise RuntimeError("boom")
+        return real_poll(self, store)
+
+    monkeypatch.setattr(T3CodeReader, "poll_once", flaky_poll)
+
+    t3_path = tmp_path / "statev2.sqlite"
+    conn = create_t3_db(t3_path)
+    insert_project(conn, "p1", "/repos/recover")
+    thread = insert_thread(
+        conn,
+        thread_id="rec-1",
+        project_id="p1",
+        title="Recover",
+        provider="antigravity",
+        model="gemini-4-neon",
+        created_at=datetime.now(UTC).isoformat(),
+    )
+    append_event(
+        conn,
+        seq_hint=1,
+        aggregate_kind="thread",
+        stream_id="rec-1",
+        event_type="thread.created",
+        occurred_at=datetime.now(UTC).isoformat(),
+        payload=thread,
+    )
+    conn.close()
+
+    settings = Settings(
+        _env_file=None,
+        db_path=tmp_path / "monitor.db",
+        t3_enabled=True,
+        t3_db_path=t3_path,
+        t3_poll_interval_seconds=0.05,
+    )
+    with TestClient(create_app(settings)) as client:
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            agents = client.get("/agents").json()
+            if agents:
+                break
+            time.sleep(0.05)
+        assert len(agents) == 1
+        assert agents[0]["session_id"] == "rec-1"
+
+
+def test_missing_projection_table_does_not_flap_waiting_input(tmp_path: Path) -> None:
+    t3_path = tmp_path / "statev2.sqlite"
+    conn = create_t3_db(t3_path)
+    insert_project(conn, "p1", "/repos/req")
+    thread = insert_thread(
+        conn,
+        thread_id="t1",
+        project_id="p1",
+        title="Wait",
+        provider="antigravity",
+        model="gemini-4-neon",
+        created_at="2026-11-20T10:00:00Z",
+    )
+    append_event(
+        conn,
+        seq_hint=1,
+        aggregate_kind="thread",
+        stream_id="t1",
+        event_type="thread.created",
+        occurred_at="2026-11-20T10:00:00Z",
+        payload=thread,
+    )
+    append_event(
+        conn,
+        seq_hint=2,
+        aggregate_kind="thread",
+        stream_id="t1",
+        event_type="turn-item.updated",
+        occurred_at="2026-11-20T10:00:01Z",
+        payload={"id": "u1", "threadId": "t1", "type": "user_message", "text": "go"},
+    )
+    with conn:
+        conn.execute(
+            """
+            INSERT INTO orchestration_v2_projection_runtime_requests
+                (runtime_request_id, thread_id, node_id, kind, status,
+                 created_at, resolved_at, payload_json)
+            VALUES ('req-1', 't1', 'n1', 'approval', 'pending', '2026-11-20T10:00:02Z', NULL, '{}')
+            """
+        )
+
+    store = EventStore(tmp_path / "monitor.db")
+    reader = T3CodeReader(t3_path)
+    reader.poll_once(store)
+
+    with conn:
+        conn.execute(
+            "ALTER TABLE orchestration_v2_projection_runtime_requests "
+            "RENAME TO runtime_requests_tmp"
+        )
+    assert reader.poll_once(store) == []
+
+    with conn:
+        conn.execute(
+            "ALTER TABLE runtime_requests_tmp "
+            "RENAME TO orchestration_v2_projection_runtime_requests"
+        )
+    conn.close()
+
+    assert reader.poll_once(store) == []
+    summary = build_summary(
+        "t1",
+        store.events_for_session("t1"),
+        datetime(2026, 11, 20, 10, 0, 5, tzinfo=UTC),
+        timedelta(minutes=10),
+    )
+    assert summary.status == AgentStatus.WAITING_INPUT
+
+
+def test_resolved_request_skipped_when_real_event_arrives_in_same_poll(tmp_path: Path) -> None:
+    t3_path = tmp_path / "statev2.sqlite"
+    conn = create_t3_db(t3_path)
+    insert_project(conn, "p1", "/repos/req2")
+    thread = insert_thread(
+        conn,
+        thread_id="t1",
+        project_id="p1",
+        title="Resume",
+        provider="antigravity",
+        model="gemini-4-neon",
+        created_at="2026-11-20T10:00:00Z",
+    )
+    append_event(
+        conn,
+        seq_hint=1,
+        aggregate_kind="thread",
+        stream_id="t1",
+        event_type="thread.created",
+        occurred_at="2026-11-20T10:00:00Z",
+        payload=thread,
+    )
+    append_event(
+        conn,
+        seq_hint=2,
+        aggregate_kind="thread",
+        stream_id="t1",
+        event_type="turn-item.updated",
+        occurred_at="2026-11-20T10:00:01Z",
+        payload={"id": "u1", "threadId": "t1", "type": "user_message", "text": "go"},
+    )
+    with conn:
+        conn.execute(
+            """
+            INSERT INTO orchestration_v2_projection_runtime_requests
+                (runtime_request_id, thread_id, node_id, kind, status,
+                 created_at, resolved_at, payload_json)
+            VALUES ('req-1', 't1', 'n1', 'approval', 'pending', '2026-11-20T10:00:02Z', NULL, '{}')
+            """
+        )
+
+    store = EventStore(tmp_path / "monitor.db")
+    reader = T3CodeReader(t3_path)
+    reader.poll_once(store)
+
+    with conn:
+        conn.execute(
+            "UPDATE orchestration_v2_projection_runtime_requests "
+            "SET status = 'resolved', resolved_at = '2026-11-20T10:00:03Z'"
+        )
+    append_event(
+        conn,
+        seq_hint=3,
+        aggregate_kind="thread",
+        stream_id="t1",
+        event_type="turn-item.updated",
+        occurred_at="2026-11-20T10:00:04Z",
+        payload={
+            "id": "edit-1",
+            "threadId": "t1",
+            "type": "dynamic_tool",
+            "toolName": "Edit",
+            "status": "running",
+            "input": {"file_path": "/repos/req2/x.py"},
+        },
+    )
+    conn.close()
+
+    stored = reader.poll_once(store)
+    assert [e.hook_event_name for e in stored] == ["PreToolUse"]
+    summary = build_summary(
+        "t1",
+        store.events_for_session("t1"),
+        datetime(2026, 11, 20, 10, 0, 5, tzinfo=UTC),
+        timedelta(minutes=10),
+    )
+    assert summary.status == AgentStatus.RUNNING_TOOL
+    assert summary.activity == Activity.CODING
+
+
+def test_idle_poll_does_not_rewrite_source_cursors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    t3_path = tmp_path / "statev2.sqlite"
+    conn = create_t3_db(t3_path)
+    insert_project(conn, "p1", "/repos/idle")
+    thread = insert_thread(
+        conn,
+        thread_id="t1",
+        project_id="p1",
+        title="Idle",
+        provider="antigravity",
+        model="gemini-4-neon",
+        created_at="2026-11-20T10:00:00Z",
+    )
+    append_event(
+        conn,
+        seq_hint=1,
+        aggregate_kind="thread",
+        stream_id="t1",
+        event_type="thread.created",
+        occurred_at="2026-11-20T10:00:00Z",
+        payload=thread,
+    )
+    append_event(
+        conn,
+        seq_hint=2,
+        aggregate_kind="thread",
+        stream_id="t1",
+        event_type="run.updated",
+        occurred_at="2026-11-20T10:00:02Z",
+        payload={
+            "id": "r1",
+            "threadId": "t1",
+            "status": "completed",
+            "providerInstanceId": "antigravity",
+            "modelSelection": {"instanceId": "antigravity", "model": "gemini-4-hydrogen"},
+        },
+    )
+    conn.close()
+
+    store = EventStore(tmp_path / "monitor.db")
+    reader = T3CodeReader(t3_path)
+    reader.poll_once(store)
+
+    writes = 0
+    real_add_batch = store.add_batch_with_cursor
+
+    def counting_add_batch(*args, **kwargs):
+        nonlocal writes
+        writes += 1
+        return real_add_batch(*args, **kwargs)
+
+    monkeypatch.setattr(store, "add_batch_with_cursor", counting_add_batch)
+    assert reader.poll_once(store) == []
+    assert writes == 0
+
+
+def test_non_command_tool_failures_and_string_exit_code(tmp_path: Path) -> None:
+    t3_path = tmp_path / "statev2.sqlite"
+    conn = create_t3_db(t3_path)
+    insert_project(conn, "p1", "/repos/fail")
+    thread = insert_thread(
+        conn,
+        thread_id="t1",
+        project_id="p1",
+        title="Tools",
+        provider="antigravity",
+        model="gemini-4-neon",
+        created_at="2026-11-20T10:00:00Z",
+    )
+    append_event(
+        conn,
+        seq_hint=1,
+        aggregate_kind="thread",
+        stream_id="t1",
+        event_type="thread.created",
+        occurred_at="2026-11-20T10:00:00Z",
+        payload=thread,
+    )
+    append_event(
+        conn,
+        seq_hint=2,
+        aggregate_kind="thread",
+        stream_id="t1",
+        event_type="turn-item.updated",
+        occurred_at="2026-11-20T10:00:01Z",
+        payload={
+            "id": "cmd-str-zero",
+            "threadId": "t1",
+            "type": "command_execution",
+            "status": "completed",
+            "input": "echo ok",
+            "exitCode": "0",
+        },
+    )
+    append_event(
+        conn,
+        seq_hint=3,
+        aggregate_kind="thread",
+        stream_id="t1",
+        event_type="turn-item.updated",
+        occurred_at="2026-11-20T10:00:02Z",
+        payload={
+            "id": "read-err",
+            "threadId": "t1",
+            "type": "dynamic_tool",
+            "toolName": "Read",
+            "status": "failed",
+            "error": "ENOENT",
+            "input": {"file_path": "/missing"},
+        },
+    )
+    append_event(
+        conn,
+        seq_hint=4,
+        aggregate_kind="thread",
+        stream_id="t1",
+        event_type="turn-item.updated",
+        occurred_at="2026-11-20T10:00:03Z",
+        payload={
+            "id": "edit-int",
+            "threadId": "t1",
+            "type": "dynamic_tool",
+            "toolName": "Edit",
+            "status": "interrupted",
+            "input": {"file_path": "/x.py"},
+        },
+    )
+    conn.close()
+
+    store = EventStore(tmp_path / "monitor.db")
+    T3CodeReader(t3_path).poll_once(store)
+
+    events = store.events_for_session("t1")
+    assert [(e.hook_event_name, e.tool_name) for e in events] == [
+        ("SessionStart", None),
+        ("PreToolUse", "Command"),
+        ("PostToolUse", "Command"),
+        ("PreToolUse", "Read"),
+        ("PostToolUseFailure", "Read"),
+        ("PreToolUse", "Edit"),
+        ("PostToolUseFailure", "Edit"),
+    ]
+    assert events[4].payload["error"] == "ENOENT"
+    assert events[6].payload["error"] == "interrupted"
+
+
+def test_bounded_add_evicts_oldest_entries_in_order() -> None:
+    bucket: dict[str, None] = {}
+    for idx in range(5):
+        _bounded_add(bucket, f"id-{idx}", max_size=3)
+    _bounded_add(bucket, "id-3", max_size=3)  # duplicate is a no-op
+
+    assert list(bucket) == ["id-2", "id-3", "id-4"]

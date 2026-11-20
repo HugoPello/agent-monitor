@@ -10,6 +10,7 @@ option.
 """
 
 import json
+import logging
 import sqlite3
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
@@ -18,6 +19,8 @@ from pathlib import Path
 from typing import Any
 
 from agent_monitor.models import HookEvent, StoredEvent
+
+logger = logging.getLogger(__name__)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -131,7 +134,14 @@ class EventStore:
             ).fetchone()
         if row is None:
             return 0, {}
-        return int(row["cursor"]), json.loads(row["state_json"])
+        try:
+            state = json.loads(row["state_json"])
+        except (json.JSONDecodeError, TypeError):
+            logger.warning("Corrupt cursor state for source %s; resetting cursor", source)
+            return 0, {}
+        if not isinstance(state, dict):
+            return 0, {}
+        return int(row["cursor"]), state
 
     def set_cursor(self, source: str, cursor: int, state: dict[str, Any] | None = None) -> None:
         """Persist ``cursor`` and optional serialised translator ``state``."""

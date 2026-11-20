@@ -208,7 +208,7 @@ def compute_status(
 
     main_events = [e for e in events if e.agent_id is None]  # see module docstring
     # Any activity (subagents included) proves the session is alive.
-    last_seen = events[-1].received_at
+    last_seen = max(e.received_at for e in events)
     result = _latest_status(main_events, status_from_event, last_seen, now, stale_after)
     return replace(result, turn_finished=turn_finished(main_events))
 
@@ -238,7 +238,7 @@ def _summarize_subagent(
     agent_id: str, own_events: Sequence[StoredEvent], now: datetime, stale_after: timedelta
 ) -> SubagentSummary:
     """Summary of one subagent from its own events (non-empty, oldest first)."""
-    last_seen = own_events[-1].received_at
+    last_seen = max(e.received_at for e in own_events)
     done = any(e.hook_event_name == "SubagentStop" for e in own_events)
     if done:
         activity = Activity.ENDED
@@ -253,7 +253,7 @@ def _summarize_subagent(
         agent_type=agent_type,
         status=SubagentStatus.DONE if done else SubagentStatus.RUNNING,
         activity=activity,
-        started_at=own_events[0].received_at,
+        started_at=min(e.received_at for e in own_events),
         last_event_at=last_seen,
         failed_steps=sum(e.hook_event_name == "PostToolUseFailure" for e in own_events),
         provider=_latest_str(own_events, "provider"),
@@ -374,7 +374,7 @@ def build_summary(
         current_tool=result.current_tool,
         cwd=cwd,
         started_at=events[0].received_at,
-        last_event_at=events[-1].received_at,
+        last_event_at=max(e.received_at for e in events),
         event_count=len(events),
         subagents=compute_subagents(events, now, stale_after),
         waiting_reason=waiting_reason(events, result.status),

@@ -145,3 +145,16 @@ def test_add_batch_with_cursor_rolls_back_on_error(store: EventStore) -> None:
 
     assert store.events_for_session("s1") == []
     assert store.get_cursor("t3code") == (5, {"k": "v"})
+
+
+def test_corrupt_cursor_state_recovers_to_empty(tmp_path: Path) -> None:
+    import sqlite3
+
+    db_path = tmp_path / "events.db"
+    store = EventStore(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO source_cursors (source, cursor, state_json) VALUES ('t3code', 12, '{bad')"
+        )
+
+    assert store.get_cursor("t3code") == (0, {})
