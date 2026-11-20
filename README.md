@@ -98,7 +98,8 @@ python scripts/demo.py             # --speed 2 for faster, --speed 0 for instant
 ```
 
 To start from an empty dashboard, point the server at a fresh database
-first, for example `AGENT_MONITOR_DB_PATH=data/demo.db`.
+first (and disable automatic T3 Code import if installed), for example
+`AGENT_MONITOR_T3_ENABLED=false AGENT_MONITOR_DB_PATH=data/demo.db`.
 
 ### Connect T3 Code (automatic)
 
@@ -111,7 +112,9 @@ mode (`?mode=ro`) — no hooks or per-project configuration required.
   timestamps and checkpoints are persisted in `source_cursors`, so restarts
   never duplicate events.
 - Claude Code hooks executed inside a T3 Code thread (`T3CODE_THREAD_ID`) are
-  automatically deduplicated when the T3 Code source is active.
+  automatically deduplicated when the T3 Code reader knows that thread in the
+  configured T3 database. To opt out for a nested standalone `claude` CLI
+  invoked inside a T3 terminal, set `AGENT_MONITOR_HOOK_ALLOW_IN_T3=1`.
 
 ### Connect Claude Code
 
@@ -156,9 +159,13 @@ docker run -d --name agent-monitor \
   secrets from tool inputs.
 - **`-v agent-monitor-data:/data`** keeps the database in a named volume, so
   it survives when the container is recreated.
-- To also read T3 Code threads from inside Docker, mount the T3 Code userdata
-  folder read-only (the whole directory, so SQLite can read `-wal`/`-shm`):
+- To also read T3 Code threads from inside Docker on Linux, mount the T3 Code
+  userdata folder read-only (the whole directory, so SQLite can read
+  `-wal`/`-shm`):
   `-v "$HOME/.t3/userdata:/t3:ro" -e AGENT_MONITOR_T3_DB_PATH=/t3/statev2.sqlite`.
+  Note: SQLite WAL mode requires shared memory on the same host kernel, so a
+  `:ro` bind mount through Docker Desktop's VM on Windows or macOS may fail or
+  show stale reads — running `agent-monitor` natively is recommended there.
 
 The image:
 

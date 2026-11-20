@@ -787,8 +787,9 @@ function renderTimeline() {
   // The heading stays "Timeline"; the subject sits below it in normal case,
   // so the session id reads exactly as it does on the stage.
   const badge = agent ? formatModelBadge(agent.provider, agent.model) : "";
+  const title = agent?.title ? oneLine(agent.title, 60) : "";
   dom.timelineSubject.textContent = agent
-    ? [projectName(agent.cwd), agent.title ? oneLine(agent.title, 60) : "", badge, shortId(agent.session_id)]
+    ? [projectName(agent.cwd), title, badge, shortId(agent.session_id)]
         .filter(Boolean)
         .join(" · ")
     : "";

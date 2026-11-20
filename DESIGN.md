@@ -128,7 +128,7 @@ Panels 12px, nodes 10px, controls 7px, small tags (failure badge, agent tag, key
 The top bar's attention summary: round, outlined in their colour family, uppercase monospace, hidden at zero. Each is a button that jumps to the next matching session.
 
 ### Cards / Containers
-Live stages are panels with a header (name, id, time, Details), an optional note line, and the flow. Rest rows are single lines with a coloured dot.
+Live stages are panels with a header (name, optional neutral `.provider-tag` badge, id, time, Details), an optional `.stage-title` line, an optional note line, and the flow (nodes carry an optional muted `.node-model` line). Rest rows are single lines with a coloured dot and the optional `.provider-tag`.
 
 ### Navigation
 No navigation beyond the chips and keyboard shortcuts: w next waiting, f next failure, j/k move, Esc closes details.

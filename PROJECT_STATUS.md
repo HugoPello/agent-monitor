@@ -167,4 +167,4 @@ Contract in `.impeccable/surfaces/`, system documented in `DESIGN.md`.
 - [x] Automatic deduplication of Claude Code hooks running inside T3 Code (`X-T3Code-Thread-Id`)
 - [x] `provider`, `model`, and `title` metadata on summaries and neutral badges in the dashboard
 - [x] Extended `TOOL_ACTIVITY` table (`Command`, `FileChange`, `delegate_task`, `invoke_subagent`)
-- [x] Unit, integration, and live read-only smoke tests against T3 Code SQLite
+- [x] Unit and integration tests with synthetic T3 Code SQLite fixtures, plus manual read-only verification against local `statev2.sqlite`

@@ -528,7 +528,7 @@ button {
 .node-model {
   overflow: hidden;
   color: var(--muted);
-  font: 400 10.5px var(--mono);
+  font: 400 11px var(--mono);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
