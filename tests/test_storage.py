@@ -100,3 +100,48 @@ def test_session_ids_most_recent_first(store: EventStore) -> None:
 
 def test_session_ids_empty_store(store: EventStore) -> None:
     assert store.session_ids() == []
+
+
+def test_cursor_defaults_to_zero_and_empty_state(store: EventStore) -> None:
+    assert store.get_cursor("t3code") == (0, {})
+
+
+def test_set_and_get_cursor_persists_across_reopen(tmp_path: Path) -> None:
+    db_path = tmp_path / "events.db"
+    EventStore(db_path).set_cursor("t3code", 42, {"started": ["i1"]})
+
+    assert EventStore(db_path).get_cursor("t3code") == (42, {"started": ["i1"]})
+
+
+def test_add_batch_with_cursor_persists_events_and_cursor(store: EventStore) -> None:
+    t1 = datetime(2026, 11, 20, 12, 0, tzinfo=UTC)
+    t2 = datetime(2026, 11, 20, 12, 1, tzinfo=UTC)
+    items = [
+        (make_event(session_id="s1", name="SessionStart"), t1),
+        (make_event(session_id="s1", name="UserPromptSubmit"), t2),
+    ]
+
+    stored = store.add_batch_with_cursor("t3code", items, cursor=10, state={"runs": ["r1"]})
+
+    assert [e.hook_event_name for e in stored] == ["SessionStart", "UserPromptSubmit"]
+    assert [e.received_at for e in stored] == [t1, t2]
+    assert len(store.events_for_session("s1")) == 2
+    assert store.get_cursor("t3code") == (10, {"runs": ["r1"]})
+
+
+def test_add_batch_with_cursor_rolls_back_on_error(store: EventStore) -> None:
+    store.set_cursor("t3code", 5, {"k": "v"})
+
+    class Unserializable:
+        pass
+
+    with pytest.raises(TypeError):
+        store.add_batch_with_cursor(
+            "t3code",
+            [(make_event(session_id="s1", name="SessionStart"), None)],
+            cursor=99,
+            state={"bad": Unserializable()},
+        )
+
+    assert store.events_for_session("s1") == []
+    assert store.get_cursor("t3code") == (5, {"k": "v"})

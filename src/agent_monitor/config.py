@@ -25,3 +25,8 @@ class Settings(BaseSettings):
 
     # An agent that is "working" but silent for this long is shown as stale.
     stale_after_seconds: int = Field(default=600, gt=0)
+
+    # Read-only T3 Code statev2.sqlite source (covers Claude, Gemini, OpenCode, etc.).
+    t3_enabled: bool = True
+    t3_db_path: Path = Field(default_factory=lambda: Path("~/.t3/userdata/statev2.sqlite"))
+    t3_poll_interval_seconds: float = Field(default=0.5, gt=0)

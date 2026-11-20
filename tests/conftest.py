@@ -27,7 +27,7 @@ class RunningServer(NamedTuple):
 @pytest.fixture
 def running_server(tmp_path: Path) -> Iterator[RunningServer]:
     """A real uvicorn server in a background thread, on a free port."""
-    settings = Settings(_env_file=None, db_path=tmp_path / "events.db")
+    settings = Settings(_env_file=None, db_path=tmp_path / "events.db", t3_enabled=False)
     server = build_server(settings, port=0, log_level="warning")  # port 0: OS picks a free one
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
