@@ -12,7 +12,7 @@ from agent_monitor.config import Settings
 
 @pytest.fixture
 def client(tmp_path: Path) -> TestClient:
-    settings = Settings(_env_file=None, db_path=tmp_path / "events.db")
+    settings = Settings(_env_file=None, db_path=tmp_path / "events.db", t3_enabled=False)
     return TestClient(create_app(settings))
 
 
@@ -55,6 +55,48 @@ class TestPostEvents:
         )
 
         assert response.status_code == 422
+
+    def test_enriches_claude_code_hook_with_provider(self, client: TestClient) -> None:
+        response = client.post(
+            "/events",
+            json={"session_id": "s1", "hook_event_name": "SessionStart"},
+            headers={"X-Agent-Monitor-Source": "claude-code"},
+        )
+
+        assert response.status_code == 201
+        assert response.json()["payload"]["provider"] == "claude"
+
+    def test_deduplicates_hook_inside_t3code_when_t3_source_active(self, tmp_path: Path) -> None:
+        t3_db = tmp_path / "statev2.sqlite"
+        t3_db.write_bytes(b"")
+        settings = Settings(
+            _env_file=None,
+            db_path=tmp_path / "events.db",
+            t3_enabled=True,
+            t3_db_path=t3_db,
+        )
+        t3_client = TestClient(create_app(settings))
+        queue = t3_client.app.state.broadcaster.subscribe()
+
+        response = t3_client.post(
+            "/events",
+            json={"session_id": "s1", "hook_event_name": "Stop"},
+            headers={"X-Agent-Monitor-Source": "claude-code", "X-T3Code-Thread-Id": "t-1"},
+        )
+
+        assert response.status_code == 204
+        assert t3_client.get("/agents").json() == []
+        assert queue.empty()
+
+    def test_keeps_hook_inside_t3code_when_t3_source_disabled(self, client: TestClient) -> None:
+        response = client.post(
+            "/events",
+            json={"session_id": "s1", "hook_event_name": "Stop"},
+            headers={"X-Agent-Monitor-Source": "claude-code", "X-T3Code-Thread-Id": "t-1"},
+        )
+
+        assert response.status_code == 201
+        assert len(client.get("/agents").json()) == 1
 
 
 class TestListAgents:
@@ -104,8 +146,13 @@ class TestListAgents:
                 "started_at": agent["subagents"][0]["started_at"],
                 "last_event_at": agent["subagents"][0]["last_event_at"],
                 "failed_steps": 0,
+                "provider": None,
+                "model": None,
             }
         ]
+        assert agent["provider"] is None
+        assert agent["model"] is None
+        assert agent["title"] is None
 
 
 class TestAgentEvents:

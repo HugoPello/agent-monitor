@@ -77,6 +77,20 @@ def test_forwards_event_to_server(running_server: RunningServer) -> None:
     [stored] = session_events(running_server.base_url, "hook-test")
     assert stored["hook_event_name"] == "Stop"
     assert stored["payload"]["cwd"] == "/project"
+    assert stored["payload"]["provider"] == "claude"
+
+
+def test_hook_headers_include_t3code_thread_id_when_set(
+    hook_module: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("T3CODE_THREAD_ID", raising=False)
+    assert hook_module.hook_headers() == {"X-Agent-Monitor-Source": "claude-code"}
+
+    monkeypatch.setenv("T3CODE_THREAD_ID", "thread-xyz")
+    assert hook_module.hook_headers() == {
+        "X-Agent-Monitor-Source": "claude-code",
+        "X-T3Code-Thread-Id": "thread-xyz",
+    }
 
 
 def test_ignores_proxy_environment_variables(running_server: RunningServer) -> None:

@@ -39,11 +39,23 @@ def get_timeout():
     return value if value > 0 else DEFAULT_TIMEOUT_SECONDS
 
 
-def send(body, url, timeout):
+def hook_headers():
+    """Headers identifying the hook source and any enclosing T3 Code thread."""
+    headers = {"X-Agent-Monitor-Source": "claude-code"}
+    t3_thread_id = os.environ.get("T3CODE_THREAD_ID")
+    if t3_thread_id:
+        headers["X-T3Code-Thread-Id"] = t3_thread_id
+    return headers
+
+
+def send(body, url, timeout, extra_headers=None):
+    headers = {"Content-Type": "application/json"}
+    if extra_headers:
+        headers.update(extra_headers)
     request = urllib.request.Request(
         url,
         data=body,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     # An empty ProxyHandler disables proxies taken from the environment.
@@ -67,7 +79,12 @@ def main():
     try:
         body = sys.stdin.buffer.read()
         if body.strip():
-            send(body, os.environ.get("AGENT_MONITOR_URL", DEFAULT_URL), get_timeout())
+            send(
+                body,
+                os.environ.get("AGENT_MONITOR_URL", DEFAULT_URL),
+                get_timeout(),
+                extra_headers=hook_headers(),
+            )
     except Exception as exc:  # by design: nothing may escape
         log_error(f"{type(exc).__name__}: {exc}")
     return 0
