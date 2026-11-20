@@ -4,9 +4,10 @@
 ![Python](https://img.shields.io/badge/python-3.12%2B-blue)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-**A real-time dashboard for your [Claude Code](https://code.claude.com) agents.**
+**A real-time dashboard for your [Claude Code](https://code.claude.com) and T3 Code agents.**
 See every session at a glance: what it is doing right now, which subagents
-it delegated to, what failed, and when it is waiting for you.
+it delegated to (across Claude, Gemini/Antigravity, OpenCode, and others),
+what failed, and when it is waiting for you.
 
 ![agent-monitor dashboard: a session delegates to three subagents in parallel, one fails a step, then everything finishes](docs/demo.gif)
 
@@ -99,6 +100,19 @@ python scripts/demo.py             # --speed 2 for faster, --speed 0 for instant
 To start from an empty dashboard, point the server at a fresh database
 first, for example `AGENT_MONITOR_DB_PATH=data/demo.db`.
 
+### Connect T3 Code (automatic)
+
+When T3 Code is installed locally (`~/.t3/userdata/statev2.sqlite`),
+`agent-monitor` discovers and streams all T3 Code threads automatically
+(Claude, Gemini/Antigravity, OpenCode, Codex, etc.) in strict read-only SQLite
+mode (`?mode=ro`) — no hooks or per-project configuration required.
+
+- On startup, existing T3 Code threads are imported with their original
+  timestamps and checkpoints are persisted in `source_cursors`, so restarts
+  never duplicate events.
+- Claude Code hooks executed inside a T3 Code thread (`T3CODE_THREAD_ID`) are
+  automatically deduplicated when the T3 Code source is active.
+
 ### Connect Claude Code
 
 The hook is enabled **per project**, only where you want it. Your global
@@ -142,6 +156,9 @@ docker run -d --name agent-monitor \
   secrets from tool inputs.
 - **`-v agent-monitor-data:/data`** keeps the database in a named volume, so
   it survives when the container is recreated.
+- To also read T3 Code threads from inside Docker, mount the T3 Code userdata
+  folder read-only (the whole directory, so SQLite can read `-wal`/`-shm`):
+  `-v "$HOME/.t3/userdata:/t3:ro" -e AGENT_MONITOR_T3_DB_PATH=/t3/statev2.sqlite`.
 
 The image:
 
@@ -163,6 +180,9 @@ Set these in the environment or in a `.env` file (copy
 | `AGENT_MONITOR_PORT` | `8765` | Port for the API and the dashboard |
 | `AGENT_MONITOR_DB_PATH` | `data/agent_monitor.db` | SQLite database file |
 | `AGENT_MONITOR_STALE_AFTER_SECONDS` | `600` | A working session silent for this long is shown as `Stale` |
+| `AGENT_MONITOR_T3_ENABLED` | `true` | Enable read-only polling of T3 Code's `statev2.sqlite` |
+| `AGENT_MONITOR_T3_DB_PATH` | `~/.t3/userdata/statev2.sqlite` | Path to T3 Code's SQLite database |
+| `AGENT_MONITOR_T3_POLL_INTERVAL_SECONDS` | `0.5` | Seconds between T3 Code SQLite polls |
 
 ### Hook
 
@@ -303,8 +323,9 @@ Every pull request goes through CI ([GitHub Actions](.github/workflows/ci.yml)):
 src/agent_monitor/
   api.py            FastAPI app: REST endpoints, SSE stream, dashboard
   models.py         Pydantic models for hook events
-  storage.py        SQLite event store
+  storage.py        SQLite event store and source cursor persistence
   status.py         Session and subagent status (pure functions)
+  t3code.py         Read-only T3 Code statev2.sqlite reader & translator
   sse.py            SSE message format and per-client stream
   broadcaster.py    In-memory fan-out to connected clients
   server.py         uvicorn server with clean SSE shutdown
