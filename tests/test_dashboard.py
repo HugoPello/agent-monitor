@@ -11,7 +11,7 @@ from agent_monitor.config import Settings
 
 @pytest.fixture
 def client(tmp_path: Path) -> TestClient:
-    settings = Settings(_env_file=None, db_path=tmp_path / "events.db")
+    settings = Settings(_env_file=None, db_path=tmp_path / "events.db", t3_enabled=False)
     return TestClient(create_app(settings))
 
 

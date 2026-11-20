@@ -161,6 +161,18 @@ function shortId(id) {
   return id.slice(0, 8);
 }
 
+function formatModelBadge(provider, model) {
+  const p = typeof provider === "string" ? provider.trim() : "";
+  let m = typeof model === "string" ? model.trim() : "";
+  if (p === "claude" && m.startsWith("claude-")) {
+    m = m.slice("claude-".length);
+  } else if (p === "opencode" && m.startsWith("opencode/")) {
+    m = m.slice("opencode/".length);
+  }
+  if (p && m) return `${p} · ${m}`;
+  return p || m || "";
+}
+
 function activityLabel(activity) {
   return ACTIVITY_LABELS[activity] || activity;
 }
@@ -190,7 +202,18 @@ function oneLine(text, max = DETAIL_MAX_LENGTH) {
 /** The most useful single field of a tool's input. */
 function toolDetail(toolInput) {
   const input = toolInput || {};
-  const keys = ["command", "file_path", "pattern", "url", "query", "description", "prompt"];
+  const keys = [
+    "command",
+    "CommandLine",
+    "file_path",
+    "path",
+    "Path",
+    "pattern",
+    "url",
+    "query",
+    "description",
+    "prompt",
+  ];
   for (const key of keys) {
     if (typeof input[key] === "string" && input[key]) return input[key];
   }
@@ -224,6 +247,7 @@ function eventDetail(event) {
 // What each hook event means, in words. Unknown events show their raw name.
 const EVENT_LABELS = {
   SessionStart: "Session started",
+  ThreadMetadataUpdated: "Thread updated",
   UserPromptSubmit: "You asked",
   PreToolUse: "Tool started",
   PostToolUse: "Tool finished",
@@ -296,13 +320,18 @@ function createStage(sessionId) {
   const project = el("h3", "project"); // a heading, so sessions are reachable by heading
   const meta = el("span", "stage-meta");
   const rest = el("span", "rest-state");
+  const providerTag = el("span", "provider-tag");
+  providerTag.hidden = true;
   const time = el("span", "time");
-  meta.append(rest, el("span", "session-id", shortId(sessionId)), time);
+  meta.append(rest, providerTag, el("span", "session-id", shortId(sessionId)), time);
   const details = el("button", "details-button", "Details");
   details.type = "button";
   details.dataset.sessionId = sessionId;
   details.setAttribute("aria-controls", "timeline");
   head.append(project, meta, details);
+
+  const stageTitle = el("p", "stage-title");
+  stageTitle.hidden = true;
 
   // Why the session needs you, or that something went wrong. Shown only
   // when there is something to act on; the nodes stay free of tool names.
@@ -318,7 +347,9 @@ function createStage(sessionId) {
   links.setAttribute("aria-hidden", "true"); // decorative: the nodes carry the text
   const main = el("div", "node node-main");
   const mainActivity = el("span", "node-activity");
-  main.append(el("span", "node-kind", "Main"), mainActivity);
+  const mainModel = el("span", "node-model");
+  mainModel.hidden = true;
+  main.append(el("span", "node-kind", "Main"), mainActivity, mainModel);
   const subList = el("ul", "subagent-nodes");
   subList.setAttribute("aria-label", "Subagents");
   const doneChip = el("li", "done-chip");
@@ -326,17 +357,20 @@ function createStage(sessionId) {
   subList.append(doneChip);
   flow.append(links, main, subList);
 
-  item.append(head, notes, flow);
+  item.append(head, stageTitle, notes, flow);
   const stage = {
     item,
     project,
     rest,
+    providerTag,
     time,
     details,
+    stageTitle,
     flow,
     links,
     main,
     mainActivity,
+    mainModel,
     subList,
     doneChip,
     subs: new Map(), // agent_id -> subagent node refs (see createSubNode)
@@ -355,9 +389,11 @@ function createSubNode(stage, animate) {
   const node = el("li", "node node-sub");
   const type = el("span", "node-kind");
   const activity = el("span", "node-activity");
+  const model = el("span", "node-model");
+  model.hidden = true;
   const failBadge = el("span", "node-fail");
   failBadge.hidden = true;
-  node.append(type, activity, failBadge);
+  node.append(type, activity, model, failBadge);
   stage.subList.insertBefore(node, stage.doneChip);
 
   // One flow per subagent: a faint track, the streaming dashes on top,
@@ -386,6 +422,7 @@ function createSubNode(stage, animate) {
     node,
     type,
     activity,
+    model,
     failBadge,
     group,
     track,
@@ -440,6 +477,10 @@ function updateSubNode(stage, entry, sub, animate) {
   entry.type.textContent = sub.agent_type || shortId(sub.agent_id);
   // A finished subagent has handed its result back: say "Done", not "Ended".
   entry.activity.textContent = sub.status === "done" ? "Done" : activityLabel(sub.activity);
+  const subBadge = formatModelBadge(sub.provider, sub.model);
+  entry.model.textContent = subBadge;
+  entry.model.title = subBadge;
+  entry.model.hidden = !subBadge;
   for (const target of [entry.node, entry.group]) {
     target.dataset.activity = sub.activity;
     target.dataset.state = sub.status;
@@ -510,9 +551,17 @@ function updateStage(stage, agent, animate) {
   }
   stage.failedSteps = agent.failed_steps;
   updateNotes(stage, agent);
-  stage.item.title = agent.cwd || "";
+  stage.item.title = [agent.cwd, agent.title].filter(Boolean).join(" — ");
   stage.item.dataset.activity = agent.activity;
   stage.rest.textContent = restState(agent);
+  const badge = formatModelBadge(agent.provider, agent.model);
+  stage.providerTag.textContent = badge;
+  stage.providerTag.title = badge;
+  stage.providerTag.hidden = !badge;
+  const threadTitle = agent.title ? oneLine(agent.title, 100) : "";
+  stage.stageTitle.textContent = threadTitle;
+  stage.stageTitle.title = agent.title || "";
+  stage.stageTitle.hidden = !threadTitle;
   stage.item.classList.toggle("is-ended", agent.activity === "ended");
   stage.item.classList.toggle("is-waiting", agent.activity === "waiting_input");
   stage.item.classList.toggle("is-selected", selected);
@@ -524,6 +573,9 @@ function updateStage(stage, agent, animate) {
 
   stage.main.dataset.activity = agent.activity;
   stage.mainActivity.textContent = activityLabel(agent.activity);
+  stage.mainModel.textContent = badge;
+  stage.mainModel.title = badge;
+  stage.mainModel.hidden = !badge;
 
   for (const sub of agent.subagents) {
     let entry = stage.subs.get(sub.agent_id);
@@ -734,8 +786,11 @@ function renderTimeline() {
   const agent = state.agents.get(state.selected);
   // The heading stays "Timeline"; the subject sits below it in normal case,
   // so the session id reads exactly as it does on the stage.
+  const badge = agent ? formatModelBadge(agent.provider, agent.model) : "";
   dom.timelineSubject.textContent = agent
-    ? `${projectName(agent.cwd)} · ${shortId(agent.session_id)}`
+    ? [projectName(agent.cwd), agent.title ? oneLine(agent.title, 60) : "", badge, shortId(agent.session_id)]
+        .filter(Boolean)
+        .join(" · ")
     : "";
   // Newest first, so live events appear at the top.
   dom.eventList.replaceChildren(...state.events.toReversed().map(renderEvent));

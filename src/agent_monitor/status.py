@@ -91,10 +91,14 @@ TOOL_ACTIVITY: dict[str, Activity] = {
     "Edit": Activity.CODING,
     "Write": Activity.CODING,
     "NotebookEdit": Activity.CODING,
+    "FileChange": Activity.CODING,
     "Bash": Activity.RUNNING,
     "PowerShell": Activity.RUNNING,
+    "Command": Activity.RUNNING,
     "Agent": Activity.DELEGATING,
     "Task": Activity.DELEGATING,  # the Agent tool's name before Claude Code 2.1.63
+    "delegate_task": Activity.DELEGATING,
+    "invoke_subagent": Activity.DELEGATING,
 }
 
 # Activity for every status that is not "running a tool".
@@ -209,6 +213,15 @@ def compute_status(
     return replace(result, turn_finished=turn_finished(main_events))
 
 
+def _latest_str(events: Sequence[StoredEvent], key: str) -> str | None:
+    """Return the newest non-empty string value for ``key`` in ``events``."""
+    for event in reversed(events):
+        value = event.payload.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
 class SubagentSummary(BaseModel):
     agent_id: str
     agent_type: str | None
@@ -217,6 +230,8 @@ class SubagentSummary(BaseModel):
     started_at: datetime
     last_event_at: datetime
     failed_steps: int  # failed tool calls by this subagent (it lives within one turn)
+    provider: str | None = None
+    model: str | None = None
 
 
 def _summarize_subagent(
@@ -241,6 +256,8 @@ def _summarize_subagent(
         started_at=own_events[0].received_at,
         last_event_at=last_seen,
         failed_steps=sum(e.hook_event_name == "PostToolUseFailure" for e in own_events),
+        provider=_latest_str(own_events, "provider"),
+        model=_latest_str(own_events, "model"),
     )
 
 
@@ -333,6 +350,9 @@ class AgentSummary(BaseModel):
     last_failure_at: datetime | None
     last_failure_tool: str | None
     last_failure_agent: str | None  # agent_type of the subagent that failed, if any
+    provider: str | None = None
+    model: str | None = None
+    title: str | None = None
 
 
 def build_summary(
@@ -342,6 +362,7 @@ def build_summary(
     stale_after: timedelta,
 ) -> AgentSummary:
     """Summarise a session. ``events`` must be non-empty, oldest first."""
+    main_events = [e for e in events if e.agent_id is None]
     result = compute_status(events, now, stale_after)
     # Most recent cwd wins: it can change during a session (CwdChanged).
     cwd = next((e.payload["cwd"] for e in reversed(events) if e.payload.get("cwd")), None)
@@ -361,4 +382,7 @@ def build_summary(
         last_failure_at=failures.last_at,
         last_failure_tool=failures.last_tool,
         last_failure_agent=failures.last_agent_type,
+        provider=_latest_str(main_events, "provider"),
+        model=_latest_str(main_events, "model"),
+        title=_latest_str(main_events, "title"),
     )
