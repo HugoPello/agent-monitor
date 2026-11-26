@@ -1,7 +1,8 @@
 """Run the monitor from the system tray, with no terminal open.
 
 ``agent-monitor-tray`` starts the server in a background thread and shows an
-icon in the notification area. Clicking it opens the dashboard; its menu has
+icon in the notification area, then opens the dashboard in the browser.
+Clicking the icon opens it again; its menu has
 "Quit", which stops the server cleanly and removes the icon. If a monitor
 already answers on the configured port (a second launch, or the Docker
 container), it just opens the dashboard.
@@ -192,6 +193,7 @@ def run_tray(settings: Settings) -> int:
         alert(f"Could not start on {settings.host}:{settings.port}: {exc}")
         return 1
 
+    webbrowser.open(url)  # launching it means you want to look at it
     open_once = Debounce(OPEN_DEBOUNCE_SECONDS)
 
     def open_dashboard(icon: "pystray.Icon", item: "pystray.MenuItem") -> None:
