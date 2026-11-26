@@ -89,6 +89,38 @@ python -m agent_monitor            # or: agent-monitor
 
 Open **http://127.0.0.1:8765**.
 
+### Run it from the tray (Windows)
+
+To start the monitor without a terminal, install the tray extra and create
+the shortcuts once:
+
+```bash
+.venv\Scripts\python.exe -m pip install -e ".[tray]"
+powershell -ExecutionPolicy Bypass -File scripts\install_shortcut.ps1
+```
+
+This adds **agent-monitor** to the Start Menu and the desktop
+(`-NoDesktop` skips the desktop one, `-Remove` deletes both). Opening it:
+
+- starts the server with no console window and puts an icon in the
+  notification area (the arrow next to the clock);
+- opens the dashboard in your browser;
+- clicking the icon opens the dashboard; its menu has **Quit**, which stops
+  the server;
+- if a monitor already runs on that port (a second launch, or the Docker
+  container), it just opens the dashboard.
+
+The shortcuts start in the repository folder, so they use the same database
+and `.env` as `python -m agent_monitor`. Run the script again if you move the
+repository. Without a console, server errors go to
+`data/agent-monitor-tray.log`.
+
+The shortcuts run `pythonw -m agent_monitor.tray` (Python with no console).
+The extra also installs an `agent-monitor-tray` command, but on Windows pip
+makes it an unsigned `.exe`, which security policies may block. The tray
+uses [pystray](https://github.com/moses-palmer/pystray), which also supports
+macOS and Linux, but it has only been tried on Windows.
+
 ### Try it without Claude Code
 
 In a second terminal, replay three fictional sessions (about 40 seconds):
@@ -337,9 +369,11 @@ src/agent_monitor/
   broadcaster.py    In-memory fan-out to connected clients
   server.py         uvicorn server with clean SSE shutdown
   config.py         Settings from the environment / .env
+  tray.py           System tray launcher (optional "tray" extra)
   static/           Dashboard (HTML, CSS, vanilla JS)
 hooks/              Claude Code hook script and example settings
 scripts/demo.py     Replays fictional sessions for demos
+scripts/install_shortcut.ps1   Windows shortcuts for the tray launcher
 tests/              pytest suite, including real-server integration tests
 ```
 

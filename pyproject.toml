@@ -20,11 +20,20 @@ dependencies = [
 [project.scripts]
 agent-monitor = "agent_monitor.__main__:main"
 
+# A GUI script: on Windows its launcher starts without a console window.
+[project.gui-scripts]
+agent-monitor-tray = "agent_monitor.tray:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=9.2",
     "httpx2>=2.16",  # used by FastAPI's TestClient (plain httpx is deprecated there)
     "ruff>=0.17",
+    "pillow>=13.0",  # to test the tray icon; pystray itself needs a display
+]
+tray = [
+    "pystray>=0.19.5",
+    "pillow>=13.0",
 ]
 
 [tool.setuptools.packages.find]
