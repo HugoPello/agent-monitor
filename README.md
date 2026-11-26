@@ -24,6 +24,12 @@ result travels back when it finishes. The data is made up, from
 - **What each agent is doing, in one word:** `Thinking`, `Researching`,
   `Coding`, `Running`, `Delegating`, `Waiting for you`, `Finished`, `Stale`,
   `Ended`. See [Status and activity](#status-and-activity).
+- **Only what is active is in view.** *Live* shows the sessions that are
+  working or need you. Finished and past sessions fold into one *At rest*
+  line with a count; open it to browse the history.
+- **Every agent, labelled.** Each node shows its provider and, when known,
+  its model (`claude · opus-5-5`, `antigravity · gemini-4-neon`), for
+  sessions from Claude Code hooks and from T3 Code alike.
 - **Attention first.** Sessions that need you come first, and only
   `Waiting for you` pulses. Chips in the top bar count what is waiting,
   failed, working and finished; click one to jump to it.
@@ -39,6 +45,9 @@ result travels back when it finishes. The data is made up, from
   `prefers-reduced-motion`.
 - **Live updates** over Server-Sent Events, with automatic catch-up after a
   reconnect.
+- **Start it from the tray** on Windows: a shortcut starts the server with
+  no terminal and opens the dashboard; the tray icon reopens it or quits.
+  See [Run it from the tray](#run-it-from-the-tray-windows).
 - **Safe by default:**
   - the hook never slows down or breaks Claude Code;
   - the server listens only on `127.0.0.1`;
@@ -55,17 +64,25 @@ flowchart LR
     end
     H -- "JSON on stdin" --> S["hooks/send_event.py<br/>async, 2 s timeout"]
     S -- "POST /events" --> API["FastAPI server"]
+    T3[("T3 Code<br/>statev2.sqlite")] -- "read-only poll<br/>every 0.5 s" --> R["T3 Code reader<br/>translates to hook events"]
+    R --> API
     API -- "validate + store" --> DB[("SQLite")]
     API -- "publish" --> B["Broadcaster<br/>one queue per client"]
     B -- "SSE: GET /stream" --> UI["Dashboard<br/>HTML + vanilla JS"]
     UI -- "GET /agents<br/>GET /agents/{id}/events" --> API
 ```
 
-1. **Hook.** Claude Code runs [`hooks/send_event.py`](hooks/send_event.py) on
-   each lifecycle event (session start, prompt, tool use, subagent start/stop,
-   notification, stop...). The script forwards the event's JSON to the server
-   in the background.
-2. **Store.** The server validates the event with Pydantic and stores it in
+1. **Sources.** Events arrive two ways:
+   - **Hook.** Claude Code runs [`hooks/send_event.py`](hooks/send_event.py)
+     on each lifecycle event (session start, prompt, tool use, subagent
+     start/stop, notification, stop...). The script forwards the event's JSON
+     to the server in the background.
+   - **T3 Code.** If T3 Code is installed, a background task in the server
+     ([`t3code.py`](src/agent_monitor/t3code.py)) reads its database in
+     read-only mode and translates new threads and steps into the same event
+     format, for every provider T3 Code runs. See
+     [Connect T3 Code](#connect-t3-code-automatic).
+2. **Store.** The server validates each event with Pydantic and stores it in
    SQLite.
 3. **Status.** The server works out each session's current status from its
    event history ([`status.py`](src/agent_monitor/status.py)).
@@ -256,6 +273,15 @@ inside its `Agent` tool call.
 
 Subagents are tracked from `SubagentStart` and `SubagentStop`. Session and
 subagent events share the same `session_id` and differ only by `agent_id`.
+
+- A subagent that never sends its `SubagentStop` (it was cut off, or T3 Code
+  has no end for it) turns `Stale` after `STALE_AFTER_SECONDS`. A stale
+  subagent no longer counts as running, so its session can move to *At rest*.
+- Claude Code runs some internal helpers, such as the one that suggests your
+  next reply, as subagents. They send only an untyped `SubagentStop`, with no
+  start and no tools, and are not shown as subagents. Their event stays in
+  the timeline. This rule is inferred from observed events, so it is kept
+  narrow: a type or any other event makes it a real subagent.
 
 ### Activity
 
