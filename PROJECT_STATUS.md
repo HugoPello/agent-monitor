@@ -196,3 +196,11 @@ Contract in `.impeccable/surfaces/`, system documented in `DESIGN.md`.
 - [x] "At rest" folded by default behind its title, with a count; the choice
       is remembered per browser, and jumping to a session unfolds it
 - [x] Checked in a browser against a copy of real data (1 live, 10 at rest)
+
+## Fix — Hide Claude Code's internal helpers (`fix/hide-internal-subagents`)
+
+- [x] A "subagent" that only ever sends an untyped `SubagentStop` (no start,
+      no tools) is Claude Code's own helper, such as the reply suggester, so it
+      is left out of the subagents; its event stays in the timeline
+- [x] Narrow rule, inferred from observed events: a type or any other event
+      keeps it; tested both ways and checked against real data
