@@ -186,3 +186,13 @@ Contract in `.impeccable/surfaces/`, system documented in `DESIGN.md`.
 - [x] Tested: server start/stop and busy port, "already running" check, log
       redirection, icon and .ico (BMP entries), debounce
 - [x] Tried by the owner: tray icon, click to open, Quit
+
+## Fix — Quiet history (`fix/quiet-history`)
+
+- [x] A stale subagent (no end event: cut off, or imported from T3 Code
+      without one) no longer counts as running, so days-old sessions leave
+      Live; rest rows say how many went stale
+- [x] Long subagent names on a rest row collapse to "N subagents done"
+- [x] "At rest" folded by default behind its title, with a count; the choice
+      is remembered per browser, and jumping to a session unfolds it
+- [x] Checked in a browser against a copy of real data (1 live, 10 at rest)
