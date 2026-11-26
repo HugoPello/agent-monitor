@@ -286,16 +286,27 @@ function byStageOrder(a, b) {
   return urgency || new Date(b.started_at) - new Date(a.started_at);
 }
 
+/** A subagent still at work. A stale one never sent its end event (it may
+ * have been cut off or imported without one), so it no longer counts. */
+function isRunning(sub) {
+  return sub.status === "running" && sub.activity !== "stale";
+}
+
 /** A session moves to "At rest" once nothing in it is running. */
 function isAtRest(agent) {
-  return AT_REST.has(agent.activity) && !agent.subagents.some((s) => s.status === "running");
+  return AT_REST.has(agent.activity) && !agent.subagents.some(isRunning);
 }
 
 /** "Finished · Explore done": the state line of a row at rest. */
 function restState(agent) {
   const parts = [activityLabel(agent.activity)];
   const done = agent.subagents.filter((s) => s.status === "done").map((s) => s.agent_type);
-  if (done.length) parts.push(`${done.filter(Boolean).join(", ") || "subagents"} done`);
+  // Names only while they fit on one line; T3 Code names are whole task titles.
+  const names = done.filter(Boolean);
+  if (done.length > 2 || names.join(", ").length > 40) parts.push(`${done.length} subagents done`);
+  else if (done.length) parts.push(`${names.join(", ") || "subagents"} done`);
+  const stale = agent.subagents.filter((s) => s.activity === "stale").length;
+  if (stale) parts.push(`${stale} stale`);
   return parts.join(" · ");
 }
 
