@@ -168,3 +168,21 @@ Contract in `.impeccable/surfaces/`, system documented in `DESIGN.md`.
 - [x] `provider`, `model`, and `title` metadata on summaries and neutral badges in the dashboard
 - [x] Extended `TOOL_ACTIVITY` table (`Command`, `FileChange`, `delegate_task`, `invoke_subagent`)
 - [x] Unit and integration tests with synthetic T3 Code SQLite fixtures, plus manual read-only verification against local `statev2.sqlite`
+
+## Phase 12 — Tray launcher (`feat/tray-launcher`)
+
+- [x] `agent-monitor-tray` (`src/agent_monitor/tray.py`): server in a background
+      thread, tray icon (the brand mark, drawn with Pillow), the dashboard opens
+      on launch and on click (debounced for double-clicks), Quit stops cleanly
+- [x] A second launch, or the Docker container on the same port, just opens the
+      dashboard; a busy port shows a Windows error box; output goes to
+      `data/agent-monitor-tray.log` when there is no console
+- [x] Optional `tray` extra (pystray 0.19.5, Pillow 13); Pillow also in `dev`
+      for the icon tests
+- [x] `scripts/install_shortcut.ps1`: Start Menu and desktop shortcuts running
+      the signed `pythonw.exe` (pip's unsigned `.exe` launcher was blocked by
+      Windows), started in the repo folder so the same database is used;
+      `-NoDesktop`, `-Remove`
+- [x] Tested: server start/stop and busy port, "already running" check, log
+      redirection, icon and .ico (BMP entries), debounce
+- [x] Tried by the owner: tray icon, click to open, Quit
