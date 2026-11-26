@@ -114,6 +114,8 @@ const dom = {
   liveEmpty: document.getElementById("live-empty"),
   restSection: document.getElementById("rest"),
   restList: document.getElementById("rest-list"),
+  restToggle: document.getElementById("rest-toggle"),
+  restCount: document.getElementById("rest-count"),
   summary: document.getElementById("summary"),
   timeline: document.getElementById("timeline"),
   timelineTitle: document.getElementById("timeline-title"),
@@ -678,6 +680,7 @@ function renderAgents(animate = false) {
   dom.empty.hidden = agents.length > 0;
   dom.liveEmpty.hidden = live.length > 0 || agents.length === 0;
   dom.restSection.hidden = resting.length === 0;
+  dom.restCount.textContent = resting.length;
   document.title = pageTitle(agents);
   renderSummary(agents);
 
@@ -686,6 +689,34 @@ function renderAgents(animate = false) {
     if (!isAtRest(agent)) drawLinks(state.stages.get(agent.session_id));
   }
 }
+
+// ---- "At rest": folded by default ------------------------------------------
+
+// Past sessions pile up, so the list stays folded unless you open it. The
+// choice is a per-browser convenience; storage may be unavailable.
+const REST_OPEN_KEY = "agent-monitor:rest-open";
+
+function setRestOpen(open, remember = false) {
+  dom.restList.hidden = !open;
+  dom.restToggle.setAttribute("aria-expanded", String(open));
+  if (!remember) return;
+  try {
+    localStorage.setItem(REST_OPEN_KEY, open ? "1" : "0");
+  } catch {
+    // private mode or blocked storage: it just won't be remembered
+  }
+}
+
+function restOpenAtStart() {
+  try {
+    return localStorage.getItem(REST_OPEN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+setRestOpen(restOpenAtStart());
+dom.restToggle.addEventListener("click", () => setRestOpen(dom.restList.hidden, true));
 
 // ---- Summary and keyboard navigation ---------------------------------------
 
@@ -727,6 +758,7 @@ function sessionsInPageOrder() {
 function focusSession(sessionId) {
   const stage = state.stages.get(sessionId);
   if (!stage) return;
+  if (dom.restList.contains(stage.item)) setRestOpen(true);
   const behavior = reducedMotion.matches ? "auto" : "smooth";
   stage.item.scrollIntoView({ block: "center", behavior });
   stage.details.focus({ preventScroll: true });

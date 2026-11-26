@@ -616,6 +616,45 @@ button {
 
 /* ---- At rest: compact rows --------------------------------------------- */
 
+/* The section title doubles as the fold button. */
+.section-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 2px 8px 2px 4px;
+  margin-left: -4px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+
+.section-toggle:hover {
+  border-color: var(--line);
+  color: var(--text);
+}
+
+.toggle-chevron {
+  transition: transform 0.15s;
+}
+
+.section-toggle[aria-expanded="true"] .toggle-chevron {
+  transform: rotate(90deg);
+}
+
+.section-count {
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+
 .rest-list {
   gap: 0;
   border: 1px solid var(--line);
@@ -971,5 +1010,9 @@ body:has(.timeline:modal) {
   .packet,
   .packet-back {
     display: none;
+  }
+
+  .toggle-chevron {
+    transition: none;
   }
 }
