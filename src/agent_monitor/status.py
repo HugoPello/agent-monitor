@@ -269,14 +269,31 @@ def compute_subagents(
     A subagent is ``running`` until its ``SubagentStop`` arrives. Its activity
     comes from its own latest event; a running subagent silent for longer
     than ``stale_after`` is stale (e.g. its ``SubagentStop`` was never sent).
+    Claude Code's own helpers are left out (see ``_is_internal_helper``).
     """
     by_agent: dict[str, list[StoredEvent]] = {}
     for event in events:
         if event.agent_id is not None:
             by_agent.setdefault(event.agent_id, []).append(event)
     return [
-        _summarize_subagent(agent_id, own, now, stale_after) for agent_id, own in by_agent.items()
+        _summarize_subagent(agent_id, own, now, stale_after)
+        for agent_id, own in by_agent.items()
+        if not _is_internal_helper(own)
     ]
+
+
+def _is_internal_helper(own_events: Sequence[StoredEvent]) -> bool:
+    """Whether a "subagent" is one of Claude Code's own helpers, not delegated work.
+
+    Claude Code runs small helpers (for example the one that suggests your
+    next reply) as subagents. They report only a ``SubagentStop``: no
+    ``SubagentStart``, no tool calls and an empty ``agent_type``. This is
+    inferred from observed events, not documented, so the rule is narrow:
+    any other event, or any type, makes it a real subagent.
+    """
+    return all(
+        e.hook_event_name == "SubagentStop" and not e.payload.get("agent_type") for e in own_events
+    )
 
 
 def current_turn(events: Sequence[StoredEvent]) -> Sequence[StoredEvent]:

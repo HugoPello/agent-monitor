@@ -286,6 +286,32 @@ class TestComputeSubagents:
     def test_no_subagents(self) -> None:
         assert subagents_of(ev("Stop")) == []
 
+    def test_internal_helpers_are_not_subagents(self) -> None:
+        # Claude Code's reply-suggestion helper: a lone, untyped SubagentStop.
+        events = [
+            ev("UserPromptSubmit"),
+            ev("SubagentStop", agent_id="helper", agent_type="", last_assistant_message="ok"),
+            ev("Stop"),
+        ]
+
+        assert subagents_of(*events) == []
+
+    @pytest.mark.parametrize(
+        "events",
+        [
+            # A typed stop: a real subagent whose start was missed.
+            [ev("SubagentStop", agent_id="a1", agent_type="Explore")],
+            # An untyped subagent that did something.
+            [
+                ev("PreToolUse", agent_id="a1", tool_name="Read"),
+                ev("SubagentStop", agent_id="a1", agent_type=""),
+            ],
+            [ev("SubagentStart", agent_id="a1"), ev("SubagentStop", agent_id="a1")],
+        ],
+    )
+    def test_any_other_trace_keeps_a_subagent(self, events: list[StoredEvent]) -> None:
+        assert [s.agent_id for s in subagents_of(*events)] == ["a1"]
+
     def test_agent_type_from_first_event_that_has_it(self) -> None:
         events = [
             ev("PreToolUse", agent_id="a1", tool_name="Read"),
