@@ -114,6 +114,8 @@ const dom = {
   liveEmpty: document.getElementById("live-empty"),
   restSection: document.getElementById("rest"),
   restList: document.getElementById("rest-list"),
+  restToggle: document.getElementById("rest-toggle"),
+  restCount: document.getElementById("rest-count"),
   summary: document.getElementById("summary"),
   timeline: document.getElementById("timeline"),
   timelineTitle: document.getElementById("timeline-title"),
@@ -286,16 +288,27 @@ function byStageOrder(a, b) {
   return urgency || new Date(b.started_at) - new Date(a.started_at);
 }
 
+/** A subagent still at work. A stale one never sent its end event (it may
+ * have been cut off or imported without one), so it no longer counts. */
+function isRunning(sub) {
+  return sub.status === "running" && sub.activity !== "stale";
+}
+
 /** A session moves to "At rest" once nothing in it is running. */
 function isAtRest(agent) {
-  return AT_REST.has(agent.activity) && !agent.subagents.some((s) => s.status === "running");
+  return AT_REST.has(agent.activity) && !agent.subagents.some(isRunning);
 }
 
 /** "Finished · Explore done": the state line of a row at rest. */
 function restState(agent) {
   const parts = [activityLabel(agent.activity)];
   const done = agent.subagents.filter((s) => s.status === "done").map((s) => s.agent_type);
-  if (done.length) parts.push(`${done.filter(Boolean).join(", ") || "subagents"} done`);
+  // Names only while they fit on one line; T3 Code names are whole task titles.
+  const names = done.filter(Boolean);
+  if (done.length > 2 || names.join(", ").length > 40) parts.push(`${done.length} subagents done`);
+  else if (done.length) parts.push(`${names.join(", ") || "subagents"} done`);
+  const stale = agent.subagents.filter((s) => s.activity === "stale").length;
+  if (stale) parts.push(`${stale} stale`);
   return parts.join(" · ");
 }
 
@@ -667,6 +680,7 @@ function renderAgents(animate = false) {
   dom.empty.hidden = agents.length > 0;
   dom.liveEmpty.hidden = live.length > 0 || agents.length === 0;
   dom.restSection.hidden = resting.length === 0;
+  dom.restCount.textContent = resting.length;
   document.title = pageTitle(agents);
   renderSummary(agents);
 
@@ -675,6 +689,34 @@ function renderAgents(animate = false) {
     if (!isAtRest(agent)) drawLinks(state.stages.get(agent.session_id));
   }
 }
+
+// ---- "At rest": folded by default ------------------------------------------
+
+// Past sessions pile up, so the list stays folded unless you open it. The
+// choice is a per-browser convenience; storage may be unavailable.
+const REST_OPEN_KEY = "agent-monitor:rest-open";
+
+function setRestOpen(open, remember = false) {
+  dom.restList.hidden = !open;
+  dom.restToggle.setAttribute("aria-expanded", String(open));
+  if (!remember) return;
+  try {
+    localStorage.setItem(REST_OPEN_KEY, open ? "1" : "0");
+  } catch {
+    // private mode or blocked storage: it just won't be remembered
+  }
+}
+
+function restOpenAtStart() {
+  try {
+    return localStorage.getItem(REST_OPEN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+setRestOpen(restOpenAtStart());
+dom.restToggle.addEventListener("click", () => setRestOpen(dom.restList.hidden, true));
 
 // ---- Summary and keyboard navigation ---------------------------------------
 
@@ -716,6 +758,7 @@ function sessionsInPageOrder() {
 function focusSession(sessionId) {
   const stage = state.stages.get(sessionId);
   if (!stage) return;
+  if (dom.restList.contains(stage.item)) setRestOpen(true);
   const behavior = reducedMotion.matches ? "auto" : "smooth";
   stage.item.scrollIntoView({ block: "center", behavior });
   stage.details.focus({ preventScroll: true });
